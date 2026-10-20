@@ -8,6 +8,18 @@ pub enum AppError {
     ToolNotFound(String),
     #[error("failed to run {tool}: {message}")]
     ToolFailed { tool: String, message: String },
+    #[error("invalid project: {}", .0.join("; "))]
+    InvalidProject(Vec<String>),
+    #[error("project schema version {0} is not supported by this version of EntroCut")]
+    UnsupportedSchema(u64),
+    #[error("unsupported media: {0}")]
+    UnsupportedMedia(String),
+    #[error("not found: {0}")]
+    NotFound(String),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
+    #[error("invalid JSON: {0}")]
+    Json(#[from] serde_json::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -17,6 +29,12 @@ impl AppError {
         match self {
             AppError::ToolNotFound(_) => "toolNotFound",
             AppError::ToolFailed { .. } => "toolFailed",
+            AppError::InvalidProject(_) => "invalidProject",
+            AppError::UnsupportedSchema(_) => "unsupportedSchema",
+            AppError::UnsupportedMedia(_) => "unsupportedMedia",
+            AppError::NotFound(_) => "notFound",
+            AppError::InvalidRequest(_) => "invalidRequest",
+            AppError::Json(_) => "json",
             AppError::Io(_) => "io",
         }
     }
@@ -44,5 +62,11 @@ mod tests {
         let json = serde_json::to_value(&err).unwrap();
         assert_eq!(json["kind"], "toolNotFound");
         assert_eq!(json["message"], "required tool not found: ffmpeg");
+    }
+
+    #[test]
+    fn joins_project_problems() {
+        let err = AppError::InvalidProject(vec!["a".into(), "b".into()]);
+        assert_eq!(err.to_string(), "invalid project: a; b");
     }
 }

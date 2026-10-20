@@ -32,3 +32,18 @@ export function formatTimecode(us: Microseconds, frameRate: Rational): string {
     .map(pad)
     .join(":");
 }
+
+/** Formats a duration as M:SS or H:MM:SS for display in lists. */
+export function formatDuration(us: Microseconds): string {
+  const totalSeconds = Math.floor(us / US_PER_SECOND);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const s = String(totalSeconds % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${s}` : `${m}:${s}`;
+}
+
+/** Formats a rational frame rate, e.g. 30/1 → "30", 30000/1001 → "29.97". */
+export function formatFrameRate(rate: Rational): string {
+  const fps = rate.numerator / rate.denominator;
+  return Number.isInteger(fps) ? String(fps) : fps.toFixed(2);
+}

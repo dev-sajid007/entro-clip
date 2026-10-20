@@ -1,6 +1,7 @@
 mod commands;
 mod domain;
 mod services;
+mod state;
 
 use tracing_subscriber::EnvFilter;
 
@@ -16,7 +17,17 @@ pub fn run() {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "starting EntroCut");
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![commands::system::system_check])
+        .plugin(tauri_plugin_dialog::init())
+        .manage(state::AppState::new())
+        .invoke_handler(tauri::generate_handler![
+            commands::system::system_check,
+            commands::project::get_project,
+            commands::project::create_project,
+            commands::project::open_project,
+            commands::project::save_project,
+            commands::media::import_media,
+            commands::media::generate_thumbnail,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

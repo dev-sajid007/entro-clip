@@ -1,9 +1,12 @@
+use std::ffi::OsStr;
 use std::io::ErrorKind;
-use std::process::Command;
+use std::process::{Command, Output};
 
 use serde::Serialize;
 
 use crate::domain::errors::{AppError, AppResult};
+
+const MAX_ERROR_CHARS: usize = 2000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,9 +17,14 @@ pub struct ToolStatus {
     pub error: Option<String>,
 }
 
-/// Runs `<tool> -version` and returns the first line of its output.
-pub fn tool_version(tool: &str) -> AppResult<String> {
-    let output = Command::new(tool).arg("-version").output().map_err(|e| {
+/// Runs a media tool with an argument array (never through a shell) and
+/// returns its output, mapping spawn failures and non-zero exits to `AppError`.
+pub fn run_tool<I, S>(tool: &str, args: I) -> AppResult<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let output = Command::new(tool).args(args).output().map_err(|e| {
         if e.kind() == ErrorKind::NotFound {
             AppError::ToolNotFound(tool.to_string())
         } else {
@@ -25,12 +33,19 @@ pub fn tool_version(tool: &str) -> AppResult<String> {
     })?;
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(AppError::ToolFailed {
             tool: tool.to_string(),
-            message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            message: stderr.trim().chars().take(MAX_ERROR_CHARS).collect(),
         });
     }
 
+    Ok(output)
+}
+
+/// Runs `<tool> -version` and returns the first line of its output.
+pub fn tool_version(tool: &str) -> AppResult<String> {
+    let output = run_tool(tool, ["-version"])?;
     Ok(first_line(&String::from_utf8_lossy(&output.stdout)))
 }
 

@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "id": "9d0af60d-5fcc-4d43-be9d-ae406e4ad576",
+  "name": "Untitled",
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "frameRate": {
+      "numerator": 30,
+      "denominator": 1
+    },
+    "audioSampleRate": 48000
+  },
+  "assets": [
+    {
+      "id": "be59a796-b05b-4ba0-abcc-0537720179fe",
+      "kind": "image",
+      "path": "/home/dev_sajid/Downloads/BCC26-০০০০০৯-photocard.png",
+      "name": "BCC26-০০০০০৯-photocard.png",
+      "durationUs": null,
+      "width": 1170,
+      "height": 1896,
+      "frameRate": null,
+      "hasAudio": false
+    },
+    {
+      "id": "4bec5a19-bc58-48db-918e-35a0387ccb2c",
+      "kind": "video",
+      "path": "/home/dev_sajid/Downloads/BCC26-000016.mp4",
+      "name": "BCC26-000016.mp4",
+      "durationUs": 407473923,
+      "width": 1280,
+      "height": 720,
+      "frameRate": {
+        "numerator": 30000,
+        "denominator": 1001
+      },
+      "hasAudio": true
+    }
+  ],
+  "tracks": [
+    {
+      "id": "de2f2bfc-0453-4949-a2b1-ac74cb1ea313",
+      "name": "Video 1",
+      "kind": "video",
+      "order": 0,
+      "muted": false,
+      "hidden": false,
+      "clips": []
+    },
+    {
+      "id": "7f8bef6b-8333-46c0-93f9-d500abc76009",
+      "name": "Audio 1",
+      "kind": "audio",
+      "order": 1,
+      "muted": false,
+      "hidden": false,
+      "clips": []
+    }
+  ]
+}
