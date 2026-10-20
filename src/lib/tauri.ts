@@ -142,3 +142,49 @@ export interface PreviewFrame {
 
 export const renderPreviewFrame = (timeUs: Microseconds) =>
   invoke<PreviewFrame | null>("render_preview_frame", { timeUs });
+
+/** Mirrors `Quality` in src-tauri/src/domain/render_plan.rs. */
+export type ExportQuality = "high" | "standard" | "small";
+
+export interface ExportRequest {
+  outputPath: string;
+  /** Shorter edge in pixels; null keeps the project size. */
+  shortSide: number | null;
+  /** Null keeps the project frame rate. */
+  frameRate: Rational | null;
+  quality: ExportQuality;
+  overwrite: boolean;
+}
+
+/** Mirrors `JobStatus` in src-tauri/src/jobs/manager.rs. */
+export type JobStatus =
+  | { state: "running"; progress: number }
+  | { state: "completed"; outputPath: string }
+  | { state: "failed"; error: AppError }
+  | { state: "cancelled" };
+
+/** Event names and payloads from src-tauri/src/jobs/events.rs. */
+export const EXPORT_PROGRESS = "export-progress";
+export const EXPORT_COMPLETED = "export-completed";
+/** Also sent on cancellation, with error kind `cancelled`. */
+export const JOB_FAILED = "job-failed";
+
+export interface ExportProgressEvent {
+  jobId: string;
+  progress: number;
+  outTimeUs: Microseconds;
+}
+
+export interface ExportCompletedEvent {
+  jobId: string;
+  outputPath: string;
+}
+
+export interface JobFailedEvent {
+  jobId: string;
+  error: AppError;
+}
+
+export const startExport = (request: ExportRequest) => invoke<string>("start_export", { request });
+export const cancelJob = (jobId: string) => invoke<void>("cancel_job", { jobId });
+export const getJobStatus = (jobId: string) => invoke<JobStatus>("get_job_status", { jobId });

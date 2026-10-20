@@ -28,6 +28,35 @@ impl Quality {
             Quality::Small => 26,
         }
     }
+
+    /// Target bits per pixel per frame for encoders without a CRF mode.
+    fn bits_per_pixel_milli(self) -> u64 {
+        match self {
+            Quality::High => 150,
+            Quality::Standard => 100,
+            Quality::Small => 60,
+        }
+    }
+}
+
+/// Software H.264 encoders EntroCut knows how to drive. Builds such as
+/// Fedora's `ffmpeg-free` ship OpenH264 but not x264.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoEncoder {
+    X264,
+    OpenH264,
+}
+
+impl VideoEncoder {
+    /// Preference order when several are available.
+    pub const ALL: [VideoEncoder; 2] = [VideoEncoder::X264, VideoEncoder::OpenH264];
+
+    pub fn ffmpeg_name(self) -> &'static str {
+        match self {
+            VideoEncoder::X264 => "libx264",
+            VideoEncoder::OpenH264 => "libopenh264",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -37,6 +66,7 @@ pub struct ExportSettings {
     pub frame_rate: Rational,
     pub sample_rate: u32,
     pub quality: Quality,
+    pub encoder: VideoEncoder,
 }
 
 const AUDIO_BITRATE: &str = "192k";
@@ -49,6 +79,7 @@ pub fn resolve_settings(
     short_side: Option<u32>,
     frame_rate: Option<Rational>,
     quality: Quality,
+    encoder: VideoEncoder,
 ) -> AppResult<ExportSettings> {
     let (width, height) = match short_side {
         None => (project.width, project.height),
@@ -67,6 +98,7 @@ pub fn resolve_settings(
         frame_rate: frame_rate.unwrap_or(project.frame_rate),
         sample_rate: project.audio_sample_rate,
         quality,
+        encoder,
     };
 
     let mut problems = Vec::new();
@@ -264,7 +296,6 @@ impl RenderPlan {
             args.push(input.path.clone().into_os_string());
         }
 
-        let crf = s.quality.crf().to_string();
         let sr = s.sample_rate.to_string();
         let total = format_us_as_seconds(self.duration_us);
         let graph = self.filter_graph();
@@ -276,12 +307,12 @@ impl RenderPlan {
                 "[vout]",
                 "-map",
                 "[aout]",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                &crf,
+            ]
+            .map(OsString::from),
+        );
+        args.extend(self.video_codec_args());
+        args.extend(
+            [
                 "-pix_fmt",
                 "yuv420p",
                 "-r",
@@ -305,6 +336,31 @@ impl RenderPlan {
         );
         args.push(output.as_os_str().to_owned());
         args
+    }
+
+    fn video_codec_args(&self) -> Vec<OsString> {
+        let s = &self.settings;
+        let mut args = vec!["-c:v".into(), s.encoder.ffmpeg_name().into()];
+        match s.encoder {
+            VideoEncoder::X264 => {
+                let crf = s.quality.crf().to_string();
+                args.extend(["-preset", "medium", "-crf", &crf].map(OsString::from));
+            }
+            VideoEncoder::OpenH264 => {
+                let kbps = self.video_bitrate_kbps().to_string() + "k";
+                args.extend(["-rc_mode", "bitrate", "-b:v", &kbps].map(OsString::from));
+            }
+        }
+        args
+    }
+
+    /// Bitrate for encoders without a CRF mode, scaled by pixel rate.
+    pub fn video_bitrate_kbps(&self) -> u64 {
+        let s = &self.settings;
+        let pixels_per_second =
+            u64::from(s.width) * u64::from(s.height) * u64::from(s.frame_rate.numerator)
+                / u64::from(s.frame_rate.denominator);
+        pixels_per_second * s.quality.bits_per_pixel_milli() / 1_000_000
     }
 }
 
@@ -342,7 +398,14 @@ mod tests {
     }
 
     fn settings() -> ExportSettings {
-        resolve_settings(&ProjectSettings::default(), None, None, Quality::Standard).unwrap()
+        resolve_settings(
+            &ProjectSettings::default(),
+            None,
+            None,
+            Quality::Standard,
+            VideoEncoder::X264,
+        )
+        .unwrap()
     }
 
     /// Main video track with a clip, an overlay track with an image, and music.
@@ -372,7 +435,7 @@ mod tests {
             ..ProjectSettings::default()
         };
         let size = |p: &ProjectSettings, s| {
-            let e = resolve_settings(p, Some(s), None, Quality::High).unwrap();
+            let e = resolve_settings(p, Some(s), None, Quality::High, VideoEncoder::X264).unwrap();
             (e.width, e.height)
         };
         assert_eq!(size(&landscape, 720), (1280, 720));
@@ -387,6 +450,7 @@ mod tests {
             None,
             Some(Rational::new(0, 1)),
             Quality::High,
+            VideoEncoder::X264,
         );
         assert!(matches!(err, Err(AppError::InvalidRequest(_))));
     }
@@ -472,5 +536,25 @@ mod tests {
             args[logo - 7..logo],
             ["-loop", "1", "-framerate", "30/1", "-t", "2.000000", "-i"]
         );
+    }
+
+    #[test]
+    fn openh264_uses_bitrate_instead_of_crf() {
+        let settings = ExportSettings {
+            encoder: VideoEncoder::OpenH264,
+            ..settings()
+        };
+        let plan = build(&sample_project(), settings).unwrap();
+        // 1920x1080 at 30 fps, 0.1 bits per pixel.
+        assert_eq!(plan.video_bitrate_kbps(), 6220);
+        let args: Vec<String> = plan
+            .ffmpeg_args(Path::new("/out/a.mp4"))
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let pos = |s: &str| args.iter().position(|a| a == s);
+        assert_eq!(args[pos("-c:v").unwrap() + 1], "libopenh264");
+        assert_eq!(args[pos("-b:v").unwrap() + 1], "6220k");
+        assert!(pos("-crf").is_none());
     }
 }

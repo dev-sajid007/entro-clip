@@ -60,11 +60,15 @@ export function summarizeImport(results: ImportResult[]): Notice | null {
   return { kind: failures.length > 0 ? "error" : "info", text: lines.join("\n") };
 }
 
+const allowClose = async () => true;
+
 /**
  * Project session for the editor UI. The Rust backend owns the canonical
  * project; this hook holds the latest snapshot plus transient UI state.
+ * `confirmClose` adds another check, after unsaved changes, before the
+ * window may close.
  */
-export function useProject() {
+export function useProject(confirmClose: () => Promise<boolean> = allowClose) {
   const [state, setState] = useState<ProjectState | null>(null);
   const [thumbnails, setThumbnails] = useState<Record<string, Thumbnail>>({});
   const [busy, setBusy] = useState(false);
@@ -72,6 +76,8 @@ export function useProject() {
 
   const dirtyRef = useRef(false);
   dirtyRef.current = state?.dirty ?? false;
+  const confirmCloseRef = useRef(confirmClose);
+  confirmCloseRef.current = confirmClose;
   const requestedThumbs = useRef(new Set<string>());
   // Edits run one at a time so responses can never apply out of order.
   const editQueue = useRef<Promise<unknown>>(Promise.resolve());
@@ -105,7 +111,9 @@ export function useProject() {
 
   useEffect(() => {
     const unlisten = getCurrentWindow().onCloseRequested(async (event) => {
-      if (!(await confirmDiscard())) event.preventDefault();
+      // One listener decides for the whole window: Tauri destroys it after
+      // any handler that doesn't prevent the close.
+      if (!(await confirmDiscard()) || !(await confirmCloseRef.current())) event.preventDefault();
     });
     return () => {
       unlisten.then((fn) => fn());

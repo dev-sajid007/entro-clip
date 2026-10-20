@@ -20,6 +20,8 @@ pub enum AppError {
     NotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("{0} already exists")]
+    AlreadyExists(String),
     #[error("cancelled")]
     Cancelled,
     #[error("invalid JSON: {0}")]
@@ -28,8 +30,24 @@ pub enum AppError {
     Io(#[from] std::io::Error),
 }
 
+/// A cloneable copy of an error, for storing in job status.
+#[derive(Debug, Clone, Serialize)]
+pub struct ErrorInfo {
+    pub kind: &'static str,
+    pub message: String,
+}
+
+impl From<&AppError> for ErrorInfo {
+    fn from(err: &AppError) -> Self {
+        Self {
+            kind: err.kind(),
+            message: err.to_string(),
+        }
+    }
+}
+
 impl AppError {
-    fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &'static str {
         match self {
             AppError::ToolNotFound(_) => "toolNotFound",
             AppError::ToolFailed { .. } => "toolFailed",
@@ -39,6 +57,7 @@ impl AppError {
             AppError::UnsupportedMedia(_) => "unsupportedMedia",
             AppError::NotFound(_) => "notFound",
             AppError::InvalidRequest(_) => "invalidRequest",
+            AppError::AlreadyExists(_) => "alreadyExists",
             AppError::Cancelled => "cancelled",
             AppError::Json(_) => "json",
             AppError::Io(_) => "io",

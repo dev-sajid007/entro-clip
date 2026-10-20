@@ -8,6 +8,8 @@ import { Inspector } from "../components/inspector/Inspector";
 import { Timeline, sortedTracks } from "../components/timeline/Timeline";
 import { PreviewMonitor } from "../components/preview/PreviewMonitor";
 import { usePlayback } from "../features/playback/usePlayback";
+import { useExport } from "../features/export/useExport";
+import { ExportDialog } from "../components/export-dialog/ExportDialog";
 
 function ToolBadge({ label, ok, title }: { label: string; ok: boolean; title: string }) {
   return (
@@ -31,7 +33,9 @@ export default function App() {
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [playheadUs, setPlayheadUs] = useState(0);
-  const project = useProject();
+  const [exportOpen, setExportOpen] = useState(false);
+  const exporter = useExport();
+  const project = useProject(exporter.confirmQuit);
   const { state } = project;
   const frameRate = state?.project.settings.frameRate ?? DEFAULT_RATE;
 
@@ -60,6 +64,15 @@ export default function App() {
   const playback = usePlayback(playheadUs, setPlayhead, endUs);
   const { seek } = playback;
 
+  const openExport = () => {
+    playback.pause();
+    setExportOpen(true);
+  };
+  const closeExport = () => {
+    exporter.reset();
+    setExportOpen(false);
+  };
+
   const addToTimeline = async (asset: MediaAsset) => {
     const track = tracks.find((t) => trackAccepts(t, asset.kind, asset.hasAudio));
     if (!track) {
@@ -77,7 +90,7 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target) || e.altKey) return;
+      if (exportOpen || isTypingTarget(e.target) || e.altKey) return;
       const key = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
       let action: (() => unknown) | null = null;
@@ -90,6 +103,7 @@ export default function App() {
         else if (key === "o") action = project.openProject;
         else if (key === "n") action = project.newProject;
         else if (key === "i") action = project.importFiles;
+        else if (key === "e" && endUs > 0) action = openExport;
       } else if ((key === "delete" || key === "backspace") && selectedClip) {
         action = () => {
           setSelectedClipId(null);
@@ -145,7 +159,7 @@ export default function App() {
             <ToolBadge label="FFprobe" ok={check.ffprobe.available} title={check.ffprobe.version ?? check.ffprobe.error ?? ""} />
           </>
         )}
-        <button type="button" disabled>Export</button>
+        <button type="button" onClick={openExport} disabled={!state || endUs === 0} title="Ctrl+E">Export</button>
       </header>
 
       <aside className="panel library" aria-label="Media library">
@@ -220,6 +234,17 @@ export default function App() {
           />
         )}
       </section>
+
+      {exportOpen && state && (
+        <ExportDialog
+          state={exporter.state}
+          durationUs={endUs}
+          frameRate={frameRate}
+          onStart={(preset, quality) => void exporter.start(state.project.name, preset, quality)}
+          onCancel={() => void exporter.cancel()}
+          onClose={closeExport}
+        />
+      )}
     </div>
   );
 }

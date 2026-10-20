@@ -1,8 +1,10 @@
 mod commands;
 mod domain;
+mod jobs;
 mod services;
 mod state;
 
+use tauri::{Manager, RunEvent};
 use tracing_subscriber::EnvFilter;
 
 fn init_logging() {
@@ -31,7 +33,16 @@ pub fn run() {
             commands::edit::undo_edit,
             commands::edit::redo_edit,
             commands::preview::render_preview_frame,
+            commands::export::start_export,
+            commands::export::cancel_job,
+            commands::export::get_job_status,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Kill FFmpeg rather than leave it rendering after the window closes.
+            if let RunEvent::Exit = event {
+                app.state::<state::AppState>().jobs.cancel_all();
+            }
+        });
 }
