@@ -287,7 +287,7 @@ impl Project {
     }
 }
 
-fn validate_settings(settings: &ProjectSettings, problems: &mut Vec<String>) {
+pub(crate) fn validate_settings(settings: &ProjectSettings, problems: &mut Vec<String>) {
     for (label, value) in [("width", settings.width), ("height", settings.height)] {
         if !(2..=MAX_DIMENSION).contains(&value) || value % 2 != 0 {
             problems.push(format!(
