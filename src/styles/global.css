@@ -1,0 +1,53 @@
+:root {
+  --bg: #16171b;
+  --panel: #1f2026;
+  --border: #2e3038;
+  --text: #e6e7eb;
+  --muted: #8b8f9c;
+  --accent: #3dd6c6;
+  --danger: #f06a6a;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 8px; }
+
+.editor {
+  display: grid;
+  height: 100%;
+  grid-template-columns: 260px 1fr 280px;
+  grid-template-rows: 44px minmax(0, 1fr) 240px;
+  grid-template-areas:
+    "top top top"
+    "library preview inspector"
+    "timeline timeline timeline";
+  gap: 1px;
+  background: var(--border);
+}
+
+.topbar { grid-area: top; display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--panel); }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+
+.panel { background: var(--panel); padding: 12px; overflow: auto; }
+.library { grid-area: library; }
+.inspector { grid-area: inspector; }
+.preview { grid-area: preview; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; background: var(--bg); }
+.monitor { width: min(100%, 960px); aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--border); }
+.timecode { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
+
+.timeline { grid-area: timeline; display: flex; flex-direction: column; gap: 4px; }
+.track { height: 48px; display: flex; align-items: center; padding-left: 8px; background: var(--bg); border-radius: 4px; color: var(--muted); }
+
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+.badge.ok { color: var(--accent); }
+.badge.bad { color: var(--danger); }
+
+button { font: inherit; color: var(--text); background: var(--accent); border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
