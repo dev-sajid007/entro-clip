@@ -51,12 +51,27 @@ export interface MediaAsset {
 
 export interface Clip {
   id: string;
-  assetId: string;
+  /** Source media; null for text clips. Exactly one of assetId and text is set. */
+  assetId: string | null;
+  text: TextOverlay | null;
   timelineStartUs: Microseconds;
   sourceInUs: Microseconds;
   sourceOutUs: Microseconds;
   enabled: boolean;
   audio: ClipAudio;
+}
+
+/** Mirrors `TextOverlay` in src-tauri/src/domain/project.rs. */
+export interface TextOverlay {
+  content: string;
+  /** Font size as a fraction of the frame height. */
+  size: number;
+  /** `#rrggbb` */
+  color: string;
+  /** Centre of the text block, as fractions of the frame width and height. */
+  x: number;
+  y: number;
+  background: boolean;
 }
 
 /** Mirrors `ClipAudio` in src-tauri/src/domain/project.rs. */
@@ -118,6 +133,8 @@ export type Edit =
     }
   | { type: "splitClip"; clipId: string; atUs: Microseconds }
   | { type: "deleteClip"; clipId: string }
+  | { type: "addText"; trackId: string; timelineStartUs: Microseconds }
+  | { type: "updateText"; clipId: string; text: TextOverlay }
   | { type: "updateClipAudio"; clipId: string; gainDb?: number; fadeInUs?: Microseconds; fadeOutUs?: Microseconds }
   | { type: "addTrack"; kind: TrackKind }
   | { type: "deleteTrack"; trackId: string }

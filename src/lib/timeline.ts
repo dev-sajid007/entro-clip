@@ -70,9 +70,24 @@ export function overlapsTrack(
   );
 }
 
-/** Mirrors `Track::accepts` in the Rust domain model. */
-export function trackAccepts(track: Track, kind: AssetKind, hasAudio: boolean): boolean {
+/** Mirrors `DEFAULT_TEXT_DURATION_US` in src-tauri/src/domain/edit.rs. */
+export const DEFAULT_TEXT_DURATION_US = 3_000_000;
+
+/** What a clip shows: its asset's kind, or text. */
+export type ClipKind = AssetKind | "text";
+
+/** Mirrors `Track::accepts` (and the text-clip rule) in the Rust domain model. */
+export function trackAccepts(track: Track, kind: ClipKind, hasAudio: boolean): boolean {
+  if (kind === "text") return track.kind === "video";
   return track.kind === "video" ? kind === "video" || kind === "image" : kind === "audio" || hasAudio;
+}
+
+/**
+ * The first video track, top-most first, with room for a clip of
+ * `durationUs` at `startUs`.
+ */
+export function freeVideoTrack(tracks: Track[], startUs: Microseconds, durationUs: Microseconds): Track | null {
+  return tracks.find((t) => t.kind === "video" && !overlapsTrack(t, startUs, durationUs)) ?? null;
 }
 
 /** End time of the last clip on the track. */

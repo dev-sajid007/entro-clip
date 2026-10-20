@@ -55,6 +55,11 @@ pub async fn start_export(
         encoder,
     )?;
     let plan = render_plan::build(&project, settings)?;
+    if plan.has_text() {
+        tauri::async_runtime::spawn_blocking(render::require_drawtext)
+            .await
+            .map_err(|e| AppError::InvalidRequest(e.to_string()))??;
+    }
 
     let (job_id, control) = state.jobs.start()?;
     tracing::info!(%job_id, output = %output.display(), "starting export");
@@ -203,7 +208,7 @@ fn check_sources(project: &Project) -> AppResult<()> {
                 .tracks
                 .iter()
                 .flat_map(|t| &t.clips)
-                .any(|c| c.enabled && c.asset_id == a.id)
+                .any(|c| c.enabled && c.asset_id == Some(a.id))
         })
         .filter(|a| !a.path.is_file())
         .map(|a| a.name.as_str())
@@ -238,7 +243,8 @@ mod tests {
         };
         project.tracks[0].clips.push(Clip {
             id: Uuid::new_v4(),
-            asset_id: asset.id,
+            asset_id: Some(asset.id),
+            text: None,
             timeline_start_us: 0,
             source_in_us: 0,
             source_out_us: 1_000_000,

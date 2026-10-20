@@ -42,6 +42,30 @@ impl RenderControl {
 }
 
 static H264_ENCODER: OnceLock<VideoEncoder> = OnceLock::new();
+static DRAWTEXT: OnceLock<()> = OnceLock::new();
+
+/// Fails unless the installed FFmpeg has the `drawtext` filter, which text
+/// clips need. Builds without libfreetype lack it.
+pub fn require_drawtext() -> AppResult<()> {
+    if DRAWTEXT.get().is_some() {
+        return Ok(());
+    }
+    let output = run_tool("ffmpeg", ["-hide_banner", "-filters"])?;
+    let listing = String::from_utf8_lossy(&output.stdout);
+    if !listing
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some("drawtext"))
+    {
+        return Err(AppError::ToolFailed {
+            tool: "ffmpeg".into(),
+            message: "this FFmpeg build can't draw text (no drawtext filter); \
+                      install a build with libfreetype to export text clips"
+                .into(),
+        });
+    }
+    DRAWTEXT.get_or_init(|| ());
+    Ok(())
+}
 
 /// Finds an H.264 encoder in the installed FFmpeg. Only a successful lookup
 /// is cached, so installing a better FFmpeg build takes effect on retry.
@@ -224,7 +248,7 @@ fn verify(path: &Path, expected_us: u64) -> AppResult<()> {
 mod tests {
     use super::*;
     use crate::domain::project::{
-        Clip, ClipAudio, MediaAsset, Project, ProjectSettings, Track, TrackKind,
+        Clip, ClipAudio, MediaAsset, Project, ProjectSettings, TextOverlay, Track, TrackKind,
     };
     use crate::domain::render_plan::{Quality, build, resolve_settings};
     use crate::domain::time::Rational;
@@ -325,7 +349,8 @@ mod tests {
         let asset = asset_for(&source, true);
         let clip = |start, src_in, len| Clip {
             id: Uuid::new_v4(),
-            asset_id: asset.id,
+            asset_id: Some(asset.id),
+            text: None,
             timeline_start_us: start,
             source_in_us: src_in,
             source_out_us: src_in + len,
@@ -375,6 +400,55 @@ mod tests {
         assert!(brightness_at(&output, "2.0") > 60.0);
     }
 
+    /// Text full of filtergraph and drawtext special characters renders, and
+    /// only while its clip is on the timeline.
+    #[test]
+    fn renders_text_with_special_characters() {
+        if !ffmpeg_available() || require_drawtext().is_err() {
+            eprintln!("skipping: ffmpeg with drawtext not installed");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let settings = ProjectSettings {
+            width: 320,
+            height: 240,
+            frame_rate: Rational::new(25, 1),
+            audio_sample_rate: 48_000,
+        };
+        let mut project = Project::new("Text", settings.clone());
+        project.tracks[0].clips.push(Clip {
+            id: Uuid::new_v4(),
+            asset_id: None,
+            text: Some(TextOverlay {
+                content: "It's 100%: [a,b]; \\ {x}\nline two".into(),
+                size: 0.2,
+                ..TextOverlay::default()
+            }),
+            timeline_start_us: SEC,
+            source_in_us: 0,
+            source_out_us: SEC,
+            enabled: true,
+            audio: Default::default(),
+        });
+        project.validate().unwrap();
+
+        let export = resolve_settings(
+            &settings,
+            None,
+            None,
+            Quality::Small,
+            h264_encoder().unwrap(),
+        )
+        .unwrap();
+        let plan = build(&project, export).unwrap();
+        let output = dir.path().join("text.mp4");
+        run(&plan, &output, &RenderControl::default(), |_| {}).unwrap();
+
+        let dark = brightness_at(&output, "0.5");
+        let lit = brightness_at(&output, "1.5");
+        assert!(lit > dark + 5.0, "text frame {lit} vs black {dark}");
+    }
+
     #[test]
     fn cancelled_render_leaves_no_file() {
         if !ffmpeg_available() {
@@ -389,7 +463,8 @@ mod tests {
         let asset = asset_for(&source, true);
         project.tracks[0].clips.push(Clip {
             id: Uuid::new_v4(),
-            asset_id: asset.id,
+            asset_id: Some(asset.id),
+            text: None,
             timeline_start_us: 0,
             source_in_us: 0,
             source_out_us: SEC,

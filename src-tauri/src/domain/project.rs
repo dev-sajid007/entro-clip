@@ -6,11 +6,17 @@ use uuid::Uuid;
 
 use super::time::Rational;
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// Gain limits for clips and tracks, in decibels.
 pub const MIN_GAIN_DB: f64 = -60.0;
 pub const MAX_GAIN_DB: f64 = 12.0;
+
+/// Longest text a text clip may hold, in characters.
+pub const MAX_TEXT_CHARS: usize = 500;
+/// Text size limits, as fractions of the frame height.
+pub const MIN_TEXT_SIZE: f64 = 0.01;
+pub const MAX_TEXT_SIZE: f64 = 0.5;
 
 const MAX_DIMENSION: u32 = 8192;
 const MAX_FPS: u64 = 240;
@@ -75,13 +81,48 @@ pub struct MediaAsset {
 #[serde(rename_all = "camelCase")]
 pub struct Clip {
     pub id: Uuid,
-    pub asset_id: Uuid,
+    /// The source media. Exactly one of `asset_id` and `text` is set.
+    #[serde(default)]
+    pub asset_id: Option<Uuid>,
+    /// Generated text instead of source media. Text clips have no source,
+    /// so their source range always starts at 0 and only sets the duration.
+    #[serde(default)]
+    pub text: Option<TextOverlay>,
     pub timeline_start_us: u64,
     pub source_in_us: u64,
     pub source_out_us: u64,
     pub enabled: bool,
     #[serde(default)]
     pub audio: ClipAudio,
+}
+
+/// A block of text drawn over the picture.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextOverlay {
+    pub content: String,
+    /// Font size as a fraction of the frame height.
+    pub size: f64,
+    /// `#rrggbb`
+    pub color: String,
+    /// Centre of the text block, as fractions of the frame width and height.
+    pub x: f64,
+    pub y: f64,
+    /// Draws a translucent dark box behind the text.
+    pub background: bool,
+}
+
+impl Default for TextOverlay {
+    fn default() -> Self {
+        Self {
+            content: "Title".into(),
+            size: 0.08,
+            color: "#ffffff".into(),
+            x: 0.5,
+            y: 0.5,
+            background: false,
+        }
+    }
 }
 
 /// Per-clip sound settings. Fades are linear and measured from the clip's
@@ -107,6 +148,10 @@ impl Clip {
     /// Whether the clip covers `time_us` (start inclusive, end exclusive).
     pub fn contains(&self, time_us: u64) -> bool {
         time_us >= self.timeline_start_us && time_us < self.end_us()
+    }
+
+    pub fn is_text(&self) -> bool {
+        self.text.is_some()
     }
 
     /// Maps a timeline time inside this clip to a time in the source media.
@@ -199,7 +244,8 @@ impl Project {
         tracks
     }
 
-    /// The top-most visible video or image clip at `time_us`, if any.
+    /// The top-most visible video or image clip at `time_us`, if any. Text
+    /// clips are skipped; the preview draws them separately.
     pub fn visual_clip_at(&self, time_us: u64) -> Option<(&Clip, &MediaAsset)> {
         self.tracks_in_order()
             .into_iter()
@@ -208,7 +254,7 @@ impl Project {
                 t.clips
                     .iter()
                     .find(|c| c.enabled && c.contains(time_us))
-                    .and_then(|c| self.asset(c.asset_id).map(|a| (c, a)))
+                    .and_then(|c| c.asset_id.and_then(|id| self.asset(id)).map(|a| (c, a)))
             })
     }
 
@@ -272,16 +318,33 @@ impl Project {
             if audio.fade_in_us.saturating_add(audio.fade_out_us) > clip.duration_us() {
                 problems.push(format!("clip {} fades are longer than the clip", clip.id));
             }
-            let Some(asset) = self.asset(clip.asset_id) else {
-                problems.push(format!(
-                    "clip {} references missing asset {}",
-                    clip.id, clip.asset_id
-                ));
-                continue;
-            };
             if clip.source_out_us <= clip.source_in_us {
                 problems.push(format!("clip {} has non-positive duration", clip.id));
             }
+            let asset_id = match (clip.asset_id, &clip.text) {
+                (Some(asset_id), None) => asset_id,
+                (None, Some(text)) => {
+                    if track.kind != TrackKind::Video {
+                        problems.push(format!("text clip {} must be on a video track", clip.id));
+                    }
+                    validate_text(clip.id, text, problems);
+                    continue;
+                }
+                _ => {
+                    problems.push(format!(
+                        "clip {} must have either a source or text",
+                        clip.id
+                    ));
+                    continue;
+                }
+            };
+            let Some(asset) = self.asset(asset_id) else {
+                problems.push(format!(
+                    "clip {} references missing asset {asset_id}",
+                    clip.id
+                ));
+                continue;
+            };
             if let Some(duration) = asset.duration_us
                 && clip.source_out_us > duration
             {
@@ -323,6 +386,38 @@ impl Project {
             }
         }
     }
+}
+
+fn validate_text(clip_id: Uuid, text: &TextOverlay, problems: &mut Vec<String>) {
+    if text.content.trim().is_empty() {
+        problems.push(format!("text clip {clip_id} is empty"));
+    }
+    if text.content.chars().any(|c| c.is_control() && c != '\n') {
+        problems.push(format!("text clip {clip_id} contains control characters"));
+    }
+    if text.content.chars().count() > MAX_TEXT_CHARS {
+        problems.push(format!(
+            "text clip {clip_id} is longer than {MAX_TEXT_CHARS} characters"
+        ));
+    }
+    if !(MIN_TEXT_SIZE..=MAX_TEXT_SIZE).contains(&text.size) {
+        problems.push(format!("text clip {clip_id} has an invalid size"));
+    }
+    if !(0.0..=1.0).contains(&text.x) || !(0.0..=1.0).contains(&text.y) {
+        problems.push(format!("text clip {clip_id} is positioned off the frame"));
+    }
+    if parse_hex_color(&text.color).is_none() {
+        problems.push(format!("text clip {clip_id} has an invalid colour"));
+    }
+}
+
+/// Parses `#rrggbb` into its 24-bit value.
+pub fn parse_hex_color(color: &str) -> Option<u32> {
+    let hex = color.strip_prefix('#')?;
+    if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok()
 }
 
 fn valid_gain(db: f64) -> bool {
@@ -385,7 +480,8 @@ mod tests {
     fn clip(asset: &MediaAsset, start: u64, src_in: u64, src_out: u64) -> Clip {
         Clip {
             id: Uuid::new_v4(),
-            asset_id: asset.id,
+            asset_id: Some(asset.id),
+            text: None,
             timeline_start_us: start,
             source_in_us: src_in,
             source_out_us: src_out,
@@ -514,6 +610,84 @@ mod tests {
         c.source_out_us = 1_000_000;
         c.fit_fades();
         assert_eq!((c.audio.fade_in_us, c.audio.fade_out_us), (1_000_000, 0));
+    }
+
+    fn text_clip(start: u64, len: u64, text: TextOverlay) -> Clip {
+        Clip {
+            id: Uuid::new_v4(),
+            asset_id: None,
+            text: Some(text),
+            timeline_start_us: start,
+            source_in_us: 0,
+            source_out_us: len,
+            enabled: true,
+            audio: ClipAudio::default(),
+        }
+    }
+
+    #[test]
+    fn validates_text_clips() {
+        let (mut project, asset) = project_with_asset();
+        project.tracks[0]
+            .clips
+            .push(text_clip(0, 1_000_000, TextOverlay::default()));
+        assert_eq!(project.validate(), Ok(()));
+
+        let bad = TextOverlay {
+            content: "  ".into(),
+            size: 0.9,
+            color: "white".into(),
+            x: 1.5,
+            ..TextOverlay::default()
+        };
+        project.tracks[0]
+            .clips
+            .push(text_clip(2_000_000, 1_000_000, bad));
+        project.tracks[1]
+            .clips
+            .push(text_clip(0, 1_000_000, TextOverlay::default()));
+        let mut both = clip(&asset, 4_000_000, 0, 1_000_000);
+        both.text = Some(TextOverlay::default());
+        project.tracks[0].clips.push(both);
+
+        let errs = errors(&project);
+        for expected in [
+            "is empty",
+            "invalid size",
+            "invalid colour",
+            "off the frame",
+            "must be on a video track",
+            "either a source or text",
+        ] {
+            assert!(errs.contains(expected), "missing {expected:?} in {errs}");
+        }
+    }
+
+    #[test]
+    fn text_clips_are_not_preview_frames() {
+        let (mut project, asset) = project_with_asset();
+        let mut overlay = Track::new("Video 2", TrackKind::Video, 0);
+        project.tracks[0].order = 1;
+        project.tracks[1].order = 2;
+        overlay
+            .clips
+            .push(text_clip(0, 2_000_000, TextOverlay::default()));
+        project.tracks.push(overlay);
+        let base = clip(&asset, 0, 0, 2_000_000);
+        let base_id = base.id;
+        project.tracks[0].clips.push(base);
+        assert_eq!(
+            project.visual_clip_at(1_000_000).map(|(c, _)| c.id),
+            Some(base_id)
+        );
+    }
+
+    #[test]
+    fn parses_hex_colours() {
+        assert_eq!(parse_hex_color("#ff8000"), Some(0xff8000));
+        assert_eq!(parse_hex_color("#FFF"), None);
+        assert_eq!(parse_hex_color("ff8000"), None);
+        assert_eq!(parse_hex_color("#gg0000"), None);
     }
 
     #[test]

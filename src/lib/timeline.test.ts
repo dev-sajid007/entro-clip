@@ -3,6 +3,7 @@ import type { Clip, Track } from "./tauri";
 import {
   clipEnd,
   findSnap,
+  freeVideoTrack,
   formatRulerLabel,
   frameIndex,
   overlapsTrack,
@@ -19,7 +20,7 @@ const SEC = 1_000_000;
 
 function clip(id: string, start: number, inUs: number, outUs: number): Clip {
   return {
-    id, assetId: "a", timelineStartUs: start, sourceInUs: inUs, sourceOutUs: outUs, enabled: true,
+    id, assetId: "a", timelineStartUs: start, sourceInUs: inUs, sourceOutUs: outUs, enabled: true, text: null,
     audio: { gainDb: 0, fadeInUs: 0, fadeOutUs: 0 },
   };
 }
@@ -87,6 +88,16 @@ describe("track helpers", () => {
     expect(trackAccepts(track("video", []), "audio", true)).toBe(false);
     expect(trackAccepts(track("audio", []), "video", true)).toBe(true);
     expect(trackAccepts(track("audio", []), "video", false)).toBe(false);
+    expect(trackAccepts(track("video", []), "text", false)).toBe(true);
+    expect(trackAccepts(track("audio", []), "text", false)).toBe(false);
+  });
+
+  it("finds the top-most video track with room", () => {
+    const busy = { ...track("video", [clip("a", 0, 0, 5 * SEC)]), id: "busy" };
+    const free = { ...track("video", []), id: "free" };
+    expect(freeVideoTrack([track("audio", []), busy, free], SEC, SEC)?.id).toBe("free");
+    expect(freeVideoTrack([busy, free], 6 * SEC, SEC)?.id).toBe("busy");
+    expect(freeVideoTrack([busy], 4 * SEC, SEC)).toBeNull();
   });
 });
 

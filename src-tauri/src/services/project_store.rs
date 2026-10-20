@@ -74,6 +74,8 @@ fn migrate(mut value: Value) -> AppResult<Value> {
             // v2 added clip audio settings and track gain. Both default to
             // "unchanged" when absent, so only the version moves.
             1 => value["schemaVersion"] = 2.into(),
+            // v3 added text clips; existing clips all have a source.
+            2 => value["schemaVersion"] = 3.into(),
             v => return Err(AppError::UnsupportedSchema(v)),
         }
     }

@@ -143,3 +143,16 @@ h2.section { margin-top: 16px; }
 .control output { min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
 .control input[type="number"] { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
 .hint { font-size: 12px; margin: 8px 0 0; }
+
+/* Text clips. Matches the export's drawtext: sans-serif, centred lines,
+   box padding of a quarter of the font size. */
+.monitor-text { position: absolute; transform: translate(-50%, -50%); font-family: sans-serif; line-height: normal; text-align: center; white-space: pre; pointer-events: none; }
+.monitor-text.boxed { background: rgba(0, 0, 0, 0.5); padding: 0.25em; }
+.clip.text { background-color: #e8590c; }
+.control.inline { display: flex; justify-content: space-between; }
+.control.inline > span:first-child { grid-column: auto; }
+.control input[type="color"] { width: 40px; height: 24px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; }
+.text-content { width: 100%; box-sizing: border-box; resize: vertical; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 6px; }
+.segmented { display: flex; gap: 2px; grid-column: 1 / -1; }
+.segmented button { flex: 1; font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); }
+.segmented button.on { border-color: var(--accent); color: var(--accent); }

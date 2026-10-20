@@ -5,10 +5,12 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::errors::{AppError, AppResult};
-use super::project::{AssetKind, Clip, ClipAudio, Project, Track, TrackKind};
+use super::project::{AssetKind, Clip, ClipAudio, Project, TextOverlay, Track, TrackKind};
 
 /// Default length of a still image placed on the timeline.
 pub const DEFAULT_IMAGE_DURATION_US: u64 = 5_000_000;
+/// Default length of a new text clip.
+pub const DEFAULT_TEXT_DURATION_US: u64 = 3_000_000;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(
@@ -40,6 +42,16 @@ pub enum Edit {
     },
     DeleteClip {
         clip_id: Uuid,
+    },
+    /// Places a text clip with default styling.
+    AddText {
+        track_id: Uuid,
+        timeline_start_us: u64,
+    },
+    /// Replaces a text clip's content and styling.
+    UpdateText {
+        clip_id: Uuid,
+        text: TextOverlay,
     },
     /// Changes a clip's sound; omitted fields keep their value.
     UpdateClipAudio {
@@ -95,7 +107,8 @@ pub fn apply(project: &Project, edit: &Edit) -> AppResult<EditOutcome> {
             };
             let clip = Clip {
                 id: Uuid::new_v4(),
-                asset_id,
+                asset_id: Some(asset_id),
+                text: None,
                 timeline_start_us,
                 source_in_us: 0,
                 source_out_us,
@@ -157,6 +170,32 @@ pub fn apply(project: &Project, edit: &Edit) -> AppResult<EditOutcome> {
 
         Edit::DeleteClip { clip_id } => {
             take_clip(&mut next, clip_id)?;
+        }
+
+        Edit::AddText {
+            track_id,
+            timeline_start_us,
+        } => {
+            let clip = Clip {
+                id: Uuid::new_v4(),
+                asset_id: None,
+                text: Some(TextOverlay::default()),
+                timeline_start_us,
+                source_in_us: 0,
+                source_out_us: DEFAULT_TEXT_DURATION_US,
+                enabled: true,
+                audio: ClipAudio::default(),
+            };
+            created_clip_id = Some(clip.id);
+            track_mut(&mut next, track_id)?.clips.push(clip);
+        }
+
+        Edit::UpdateText { clip_id, ref text } => {
+            let clip = clip_mut(&mut next, clip_id)?;
+            if !clip.is_text() {
+                return Err(AppError::InvalidEdit("only text clips have text".into()));
+            }
+            clip.text = Some(text.clone());
         }
 
         Edit::UpdateClipAudio {
@@ -226,6 +265,11 @@ pub fn apply(project: &Project, edit: &Edit) -> AppResult<EditOutcome> {
 
     for track in &mut next.tracks {
         track.clips.sort_by_key(|c| c.timeline_start_us);
+        // Text has no source to seek into: trims and splits only change length.
+        for clip in track.clips.iter_mut().filter(|c| c.is_text()) {
+            clip.source_out_us -= clip.source_in_us.min(clip.source_out_us);
+            clip.source_in_us = 0;
+        }
     }
     next.validate()
         .map_err(|problems| AppError::InvalidEdit(problems.join("; ")))?;
@@ -575,6 +619,113 @@ mod tests {
         .project;
         let audio = trimmed.tracks[0].clips[0].audio;
         assert_eq!((audio.fade_in_us, audio.fade_out_us), (2 * SEC, 2 * SEC));
+    }
+
+    fn add_text(f: &Fixture, project: &Project, start: u64) -> (Project, Uuid) {
+        let out = apply(
+            project,
+            &Edit::AddText {
+                track_id: f.video,
+                timeline_start_us: start,
+            },
+        )
+        .unwrap();
+        (out.project, out.created_clip_id.unwrap())
+    }
+
+    #[test]
+    fn adds_and_updates_text() {
+        let f = fixture();
+        let (p, id) = add_text(&f, &f.project, SEC);
+        let clip = &p.tracks[0].clips[0];
+        assert_eq!(clip.duration_us(), DEFAULT_TEXT_DURATION_US);
+        assert_eq!(clip.asset_id, None);
+
+        let text = TextOverlay {
+            content: "Hello".into(),
+            ..TextOverlay::default()
+        };
+        let p = apply(
+            &p,
+            &Edit::UpdateText {
+                clip_id: id,
+                text: text.clone(),
+            },
+        )
+        .unwrap()
+        .project;
+        assert_eq!(p.tracks[0].clips[0].text, Some(text));
+
+        let empty = TextOverlay {
+            content: String::new(),
+            ..TextOverlay::default()
+        };
+        assert!(
+            apply(
+                &p,
+                &Edit::UpdateText {
+                    clip_id: id,
+                    text: empty
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            apply(
+                &p,
+                &Edit::AddText {
+                    track_id: f.audio_track,
+                    timeline_start_us: 0
+                }
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn text_cannot_replace_media() {
+        let f = fixture();
+        let (p, id) = add_clip(&f, &f.project, 0);
+        let err = apply(
+            &p,
+            &Edit::UpdateText {
+                clip_id: id,
+                text: TextOverlay::default(),
+            },
+        );
+        assert!(matches!(err, Err(AppError::InvalidEdit(_))));
+    }
+
+    #[test]
+    fn text_clips_trim_and_split_from_zero() {
+        let f = fixture();
+        let (p, id) = add_text(&f, &f.project, 2 * SEC);
+        // Extend the start 1 s earlier and the end 2 s later.
+        let p = apply(
+            &p,
+            &Edit::TrimClip {
+                clip_id: id,
+                timeline_start_us: SEC,
+                source_in_us: 0,
+                source_out_us: 6 * SEC,
+            },
+        )
+        .unwrap()
+        .project;
+        let out = apply(
+            &p,
+            &Edit::SplitClip {
+                clip_id: id,
+                at_us: 3 * SEC,
+            },
+        )
+        .unwrap();
+        let clips = &out.project.tracks[0].clips;
+        let spans: Vec<_> = clips
+            .iter()
+            .map(|c| (c.timeline_start_us, c.source_in_us, c.source_out_us))
+            .collect();
+        assert_eq!(spans, [(SEC, 0, 2 * SEC), (3 * SEC, 0, 4 * SEC)]);
     }
 
     #[test]

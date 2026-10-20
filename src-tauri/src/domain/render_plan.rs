@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::errors::{AppError, AppResult};
-use super::project::{AssetKind, Project, ProjectSettings, TrackKind, validate_settings};
+use super::project::{
+    AssetKind, Project, ProjectSettings, TextOverlay, TrackKind, parse_hex_color, validate_settings,
+};
 use super::time::{Rational, US_PER_SECOND, format_us_as_seconds};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -134,6 +136,24 @@ pub struct Placement {
     pub start_us: u64,
 }
 
+/// Font family for text clips, resolved through fontconfig. The preview
+/// uses the matching CSS generic family, `sans-serif`.
+pub const TEXT_FONT: &str = "Sans";
+
+/// Text drawn over the layers below it from `start_us` until `end_us`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextLayer {
+    pub start_us: u64,
+    pub end_us: u64,
+    pub text: TextOverlay,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum VideoLayer {
+    Media(Placement),
+    Text(TextLayer),
+}
+
 /// A sound source placed on the timeline, with its combined clip and track
 /// gain and its fades.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -152,7 +172,7 @@ pub struct RenderPlan {
     pub duration_us: u64,
     pub inputs: Vec<RenderInput>,
     /// Video layers from bottom to top.
-    pub video_layers: Vec<Placement>,
+    pub video_layers: Vec<VideoLayer>,
     pub audio_sources: Vec<AudioSource>,
 }
 
@@ -191,9 +211,20 @@ pub fn build(project: &Project, settings: ExportSettings) -> AppResult<RenderPla
 
     for track in video.chain(audio) {
         for clip in track.clips.iter().filter(|c| c.enabled) {
-            let asset = project
-                .asset(clip.asset_id)
-                .ok_or_else(|| AppError::NotFound(format!("asset {}", clip.asset_id)))?;
+            if let Some(text) = &clip.text {
+                if track.kind == TrackKind::Video {
+                    plan.video_layers.push(VideoLayer::Text(TextLayer {
+                        start_us: clip.timeline_start_us,
+                        end_us: clip.end_us(),
+                        text: text.clone(),
+                    }));
+                }
+                continue;
+            }
+            let asset = clip
+                .asset_id
+                .and_then(|id| project.asset(id))
+                .ok_or_else(|| AppError::NotFound(format!("source for clip {}", clip.id)))?;
             let image = asset.kind == AssetKind::Image;
             let input = plan.inputs.len();
             plan.inputs.push(RenderInput {
@@ -207,7 +238,7 @@ pub fn build(project: &Project, settings: ExportSettings) -> AppResult<RenderPla
                 start_us: clip.timeline_start_us,
             };
             if track.kind == TrackKind::Video {
-                plan.video_layers.push(placement);
+                plan.video_layers.push(VideoLayer::Media(placement));
             }
             if asset.has_audio {
                 plan.audio_sources.push(AudioSource {
@@ -244,11 +275,60 @@ fn audio_adjustments(src: &AudioSource) -> String {
     filters
 }
 
+/// Escapes a filter option value for a filtergraph: first for the option
+/// parser (`\ ' :`), then for the graph parser (`\ ' [ ] , ;`).
+pub fn escape_filter_value(value: &str) -> String {
+    let escape = |s: &str, special: &str| {
+        let mut out = String::with_capacity(s.len());
+        for c in s.chars() {
+            if special.contains(c) {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out
+    };
+    escape(&escape(value, "\\':"), "\\'[],;")
+}
+
+/// `drawtext` filter drawing `layer` centred on its position in a `w`×`h`
+/// frame, shown from its start until (not including) its end.
+fn drawtext_filter(layer: &TextLayer, w: u32, h: u32) -> String {
+    let t = &layer.text;
+    let size = ((t.size * f64::from(h)).round() as u32).max(1);
+    let cx = (t.x * f64::from(w)).round() as u32;
+    let cy = (t.y * f64::from(h)).round() as u32;
+    let color = parse_hex_color(&t.color).unwrap_or(0xffffff);
+    let enable = format!(
+        "gte(t,{})*lt(t,{})",
+        format_us_as_seconds(layer.start_us),
+        format_us_as_seconds(layer.end_us)
+    );
+    let mut filter = format!(
+        "drawtext=font={TEXT_FONT}:expansion=none:text={}:fontcolor=0x{color:06x}:\
+         fontsize={size}:text_align=center:x={cx}-text_w/2:y={cy}-text_h/2:enable={}",
+        escape_filter_value(&t.content),
+        escape_filter_value(&enable),
+    );
+    if t.background {
+        let pad = (size / 4).max(1);
+        filter.push_str(&format!(":box=1:boxcolor=black@0.5:boxborderw={pad}"));
+    }
+    filter
+}
+
 fn rate(r: Rational) -> String {
     format!("{}/{}", r.numerator, r.denominator)
 }
 
 impl RenderPlan {
+    /// Whether rendering needs FFmpeg's `drawtext` filter.
+    pub fn has_text(&self) -> bool {
+        self.video_layers
+            .iter()
+            .any(|l| matches!(l, VideoLayer::Text(_)))
+    }
+
     pub fn filter_graph(&self) -> String {
         let ExportSettings {
             width: w,
@@ -263,16 +343,24 @@ impl RenderPlan {
 
         let mut last = "base".to_string();
         for (i, layer) in self.video_layers.iter().enumerate() {
-            let start = format_us_as_seconds(layer.start_us);
-            parts.push(format!(
-                "[{}:v]fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,\
-                 format=yuva420p,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,\
-                 setpts=PTS-STARTPTS+{start}/TB[l{i}]",
-                layer.input
-            ));
-            parts.push(format!(
-                "[{last}][l{i}]overlay=eof_action=pass:format=auto[v{i}]"
-            ));
+            match layer {
+                VideoLayer::Media(placement) => {
+                    let start = format_us_as_seconds(placement.start_us);
+                    parts.push(format!(
+                        "[{}:v]fps={fps},scale={w}:{h}:force_original_aspect_ratio=decrease,\
+                         format=yuva420p,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1,\
+                         setpts=PTS-STARTPTS+{start}/TB[l{i}]",
+                        placement.input
+                    ));
+                    parts.push(format!(
+                        "[{last}][l{i}]overlay=eof_action=pass:format=auto[v{i}]"
+                    ));
+                }
+                // Drawn onto the composite so far, so layers above cover it.
+                VideoLayer::Text(text) => {
+                    parts.push(format!("[{last}]{}[v{i}]", drawtext_filter(text, w, h)));
+                }
+            }
             last = format!("v{i}");
         }
         parts.push(format!("[{last}]format=yuv420p[vout]"));
@@ -429,7 +517,8 @@ mod tests {
     fn clip(asset: &MediaAsset, start: u64, src_in: u64, len: u64) -> Clip {
         Clip {
             id: Uuid::new_v4(),
-            asset_id: asset.id,
+            asset_id: Some(asset.id),
+            text: None,
             timeline_start_us: start,
             source_in_us: src_in,
             source_out_us: src_in + len,
@@ -511,14 +600,12 @@ mod tests {
         assert_eq!(plan.duration_us, 10_500_000);
         assert_eq!(plan.inputs.len(), 3);
         // Bottom layer is the main track's video, then the overlay image.
-        assert_eq!(
-            plan.inputs[plan.video_layers[0].input].path,
-            PathBuf::from("/m/a b.mp4")
-        );
-        assert_eq!(
-            plan.inputs[plan.video_layers[1].input].path,
-            PathBuf::from("/m/logo.png")
-        );
+        let path = |i: usize| match &plan.video_layers[i] {
+            VideoLayer::Media(p) => plan.inputs[p.input].path.clone(),
+            VideoLayer::Text(_) => panic!("unexpected text layer"),
+        };
+        assert_eq!(path(0), PathBuf::from("/m/a b.mp4"));
+        assert_eq!(path(1), PathBuf::from("/m/logo.png"));
         assert_eq!(plan.inputs[0].seek_us, 2 * SEC);
         assert!(plan.inputs[1].image);
         // Video sound and the music are mixed; the image has no audio.
@@ -571,6 +658,59 @@ mod tests {
         ));
         // The video's sound is unchanged.
         assert!(graph.contains("asetpts=PTS-STARTPTS,adelay=delays=0S:all=1[a0]"));
+    }
+
+    #[test]
+    fn escapes_filter_values_twice() {
+        // The example from the FFmpeg filtergraph escaping documentation.
+        assert_eq!(
+            escape_filter_value("this is a 'string': may contain one, or more, special characters"),
+            r"this is a \\\'string\\\'\\: may contain one\, or more\, special characters"
+        );
+        assert_eq!(escape_filter_value(r"a\b[c];d"), r"a\\\\b\[c\]\;d");
+    }
+
+    #[test]
+    fn text_layers_draw_in_stack_order() {
+        let mut p = sample_project();
+        let mut title = Track::new("Titles", TrackKind::Video, 0);
+        for t in &mut p.tracks {
+            t.order += 1;
+        }
+        title.clips.push(Clip {
+            id: Uuid::new_v4(),
+            asset_id: None,
+            text: Some(TextOverlay {
+                content: "Hi, it's me".into(),
+                color: "#ff8000".into(),
+                y: 0.25,
+                background: true,
+                ..TextOverlay::default()
+            }),
+            timeline_start_us: SEC,
+            source_in_us: 0,
+            source_out_us: 2 * SEC,
+            enabled: true,
+            audio: Default::default(),
+        });
+        p.tracks.push(title);
+        p.validate().unwrap();
+
+        let plan = build(&p, settings()).unwrap();
+        assert!(plan.has_text());
+        // The titles track is on top, so its text is the last layer drawn.
+        assert!(matches!(
+            plan.video_layers.last(),
+            Some(VideoLayer::Text(_))
+        ));
+        let graph = plan.filter_graph();
+        assert!(graph.contains(
+            "[v1]drawtext=font=Sans:expansion=none:text=Hi\\, it\\\\\\'s me:fontcolor=0xff8000:\
+             fontsize=86:text_align=center:x=960-text_w/2:y=270-text_h/2:\
+             enable=gte(t\\,1.000000)*lt(t\\,3.000000):box=1:boxcolor=black@0.5:boxborderw=21[v2]"
+        ));
+        assert!(graph.contains("[v2]format=yuv420p[vout]"));
+        assert!(!build(&sample_project(), settings()).unwrap().has_text());
     }
 
     #[test]

@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { systemCheck, type MediaAsset, type SystemCheck } from "../lib/tauri";
 import { US_PER_SECOND, formatTimecode } from "../lib/time";
-import { frameDurationUs, snapToFrame, timelineEnd, trackAccepts, trackEnd } from "../lib/timeline";
+import {
+  DEFAULT_TEXT_DURATION_US,
+  frameDurationUs,
+  freeVideoTrack,
+  snapToFrame,
+  timelineEnd,
+  trackAccepts,
+  trackEnd,
+} from "../lib/timeline";
 import { useProject } from "../features/project/useProject";
 import { MediaLibrary } from "../components/media-library/MediaLibrary";
 import { Inspector } from "../components/inspector/Inspector";
@@ -74,6 +82,19 @@ export default function App() {
     setExportOpen(false);
   };
 
+  /** Adds a text clip at the playhead on the top-most video track with room. */
+  const addText = async () => {
+    const start = snapToFrame(playheadUs, frameRate);
+    const track = freeVideoTrack(tracks, start, DEFAULT_TEXT_DURATION_US);
+    if (!track) {
+      project.notify("No video track has room for text at the playhead. Add a video track or move the playhead.");
+      return;
+    }
+    playback.pause();
+    const id = await project.edit({ type: "addText", trackId: track.id, timelineStartUs: start });
+    if (id) selectClip(id);
+  };
+
   const addToTimeline = async (asset: MediaAsset) => {
     const track = tracks.find((t) => trackAccepts(t, asset.kind, asset.hasAudio));
     if (!track) {
@@ -110,6 +131,8 @@ export default function App() {
           setSelectedClipId(null);
           return project.edit({ type: "deleteClip", clipId: selectedClip.id });
         };
+      } else if (key === "t") {
+        action = addText;
       } else if (key === "s" && selectedClip) {
         action = () => project.edit({ type: "splitClip", clipId: selectedClip.id, atUs: playheadUs });
       } else if (key === "arrowleft" || key === "arrowright") {
@@ -234,6 +257,7 @@ export default function App() {
             onSeek={seek}
             onEdit={project.edit}
             onNotify={project.notify}
+            onAddText={() => void addText()}
           />
         )}
       </section>

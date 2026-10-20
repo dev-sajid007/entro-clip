@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, DragEvent } from "react";
-import { ASSET_DRAG_TYPE, type Clip, type Edit, type MediaAsset, type Project, type Track } from "../../lib/tauri";
+import { ASSET_DRAG_TYPE, type Clip, type Edit, type Project, type Track } from "../../lib/tauri";
 import type { Microseconds } from "../../lib/time";
 import {
   MAX_ZOOM,
@@ -19,6 +19,7 @@ import {
   timelineEnd,
   trackAccepts,
   usToPx,
+  type ClipKind,
 } from "../../lib/timeline";
 import type { Thumbnail } from "../../features/project/useProject";
 
@@ -42,7 +43,10 @@ interface DragState {
   mode: DragMode;
   clip: Clip;
   trackId: string;
-  asset: MediaAsset;
+  kind: ClipKind;
+  hasAudio: boolean;
+  /** Longest the source allows; null for text and unknown durations. */
+  maxOutUs: Microseconds | null;
   originX: number;
   moved: boolean;
   preview: Preview;
@@ -58,6 +62,7 @@ interface Props {
   onSeek: (us: Microseconds) => void;
   onEdit: (edit: Edit) => Promise<string | null>;
   onNotify: (text: string) => void;
+  onAddText: () => void;
 }
 
 export function sortedTracks(project: Project): Track[] {
@@ -74,6 +79,7 @@ export function Timeline({
   onSeek,
   onEdit,
   onNotify,
+  onAddText,
 }: Props) {
   const [zoom, setZoom] = useState(60);
   const [snapping, setSnapping] = useState(true);
@@ -170,8 +176,8 @@ export function Timeline({
 
   const startDrag = (e: ReactPointerEvent, mode: DragMode, clip: Clip, track: Track) => {
     if (e.button !== 0) return;
-    const asset = assets.get(clip.assetId);
-    if (!asset) return;
+    const asset = clip.assetId ? assets.get(clip.assetId) : undefined;
+    if (!asset && !clip.text) return;
     e.stopPropagation();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     onSelectClip(clip.id);
@@ -179,7 +185,9 @@ export function Timeline({
       mode,
       clip,
       trackId: track.id,
-      asset,
+      kind: asset?.kind ?? "text",
+      hasAudio: asset?.hasAudio ?? false,
+      maxOutUs: asset?.durationUs ?? null,
       originX: e.clientX,
       moved: false,
       preview: {
@@ -195,7 +203,8 @@ export function Timeline({
   };
 
   const computePreview = (d: DragState, clientX: number, clientY: number): Preview => {
-    const { clip, asset } = d;
+    const { clip } = d;
+    const isText = d.kind === "text";
     const delta = pxToUs(clientX - d.originX, zoom);
     const duration = clipDuration(clip);
     const homeTrack = tracks.find((t) => t.id === d.trackId)!;
@@ -216,30 +225,34 @@ export function Timeline({
       }
       const target = trackAt(clientY) ?? homeTrack;
       const valid =
-        trackAccepts(target, asset.kind, asset.hasAudio) && !overlapsTrack(target, start, duration, clip.id);
+        trackAccepts(target, d.kind, d.hasAudio) && !overlapsTrack(target, start, duration, clip.id);
       return { trackId: target.id, startUs: start, inUs: clip.sourceInUs, outUs: clip.sourceOutUs, valid };
     }
 
     if (d.mode === "trimStart") {
       const snapped = snapPoint(clip.timelineStartUs + delta, clip.id);
       let shift = snapped - clip.timelineStartUs;
-      shift = Math.max(shift, -clip.sourceInUs, -clip.timelineStartUs);
+      // Text has no source to run out of, so its start can extend freely.
+      shift = Math.max(shift, isText ? -Infinity : -clip.sourceInUs, -clip.timelineStartUs);
       shift = Math.min(shift, duration - minClipUs);
       const start = clip.timelineStartUs + shift;
-      const inUs = clip.sourceInUs + shift;
+      const newDuration = duration - shift;
+      // Text clips keep their source range starting at 0.
+      const inUs = isText ? 0 : clip.sourceInUs + shift;
+      const outUs = isText ? newDuration : clip.sourceOutUs;
       return {
         trackId: homeTrack.id,
         startUs: start,
         inUs,
-        outUs: clip.sourceOutUs,
-        valid: !overlapsTrack(homeTrack, start, clip.sourceOutUs - inUs, clip.id),
+        outUs,
+        valid: !overlapsTrack(homeTrack, start, newDuration, clip.id),
       };
     }
 
     const snappedEnd = snapPoint(clipEnd(clip) + delta, clip.id);
     let outUs = clip.sourceOutUs + (snappedEnd - clipEnd(clip));
     outUs = Math.max(outUs, clip.sourceInUs + minClipUs);
-    if (asset.durationUs !== null) outUs = Math.min(outUs, asset.durationUs);
+    if (d.maxOutUs !== null) outUs = Math.min(outUs, d.maxOutUs);
     return {
       trackId: homeTrack.id,
       startUs: clip.timelineStartUs,
@@ -346,19 +359,20 @@ export function Timeline({
     playheadUs < clipEnd(selectedClip);
 
   const renderClip = (clip: Clip, track: Track) => {
-    const asset = assets.get(clip.assetId);
+    const asset = clip.assetId ? assets.get(clip.assetId) : undefined;
+    const label = clip.text ? clip.text.content : (asset?.name ?? "Missing asset");
     const isDragging = drag?.clip.id === clip.id && drag.moved;
     const p = isDragging ? drag.preview : null;
     const start = p?.startUs ?? clip.timelineStartUs;
     const duration = p ? p.outUs - p.inUs : clipDuration(clip);
-    const thumb = thumbnails[clip.assetId];
+    const thumb = clip.assetId ? thumbnails[clip.assetId] : undefined;
 
     return (
       <div
         key={clip.id}
         className={[
           "clip",
-          asset?.kind ?? "",
+          clip.text ? "text" : (asset?.kind ?? ""),
           clip.id === selectedClipId ? "selected" : "",
           isDragging ? "dragging" : "",
           p && !p.valid ? "invalid" : "",
@@ -370,9 +384,9 @@ export function Timeline({
           backgroundImage: thumb?.status === "ready" ? `url("${thumb.src}")` : undefined,
         }}
         onPointerDown={(e) => startDrag(e, "move", clip, track)}
-        title={asset?.name}
+        title={label}
       >
-        <span className="clip-label">{asset?.name ?? "Missing asset"}</span>
+        <span className="clip-label">{label}</span>
         <div className="handle start" onPointerDown={(e) => startDrag(e, "trimStart", clip, track)} />
         <div className="handle end" onPointerDown={(e) => startDrag(e, "trimEnd", clip, track)} />
       </div>
@@ -387,6 +401,9 @@ export function Timeline({
         </button>
         <button type="button" className="ghost" onClick={() => onEdit({ type: "addTrack", kind: "audio" })}>
           + Audio track
+        </button>
+        <button type="button" className="ghost" onClick={onAddText} title="Add text at the playhead (T)">
+          + Text
         </button>
         <span className="divider" />
         <button

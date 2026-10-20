@@ -35,6 +35,17 @@ export function PreviewMonitor({ project, playheadUs, playing, missingIds }: Pro
   const requestSeq = useRef(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRefs = useRef(new Map<string, HTMLAudioElement>());
+  const monitorRef = useRef<HTMLDivElement>(null);
+  const [monitorHeight, setMonitorHeight] = useState(0);
+
+  // Text is sized relative to the frame height, like the export.
+  useEffect(() => {
+    const el = monitorRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setMonitorHeight(entry.contentRect.height));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const active = useMemo(() => activeAt(project, playheadUs, missingIds), [project, playheadUs, missingIds]);
   const visualId = active.visual?.clip.id ?? null;
@@ -80,7 +91,7 @@ export function PreviewMonitor({ project, playheadUs, playing, missingIds }: Pro
     setMediaError("This file can't play in the live preview. Pause to see exact frames.");
 
   return (
-    <div className="monitor" style={{ aspectRatio: `${width} / ${height}` }}>
+    <div className="monitor" ref={monitorRef} style={{ aspectRatio: `${width} / ${height}` }}>
       {still && <img className="monitor-layer" src={still} alt="" />}
       {visual?.asset.kind === "video" && (
         <video
@@ -113,6 +124,20 @@ export function PreviewMonitor({ project, playheadUs, playing, missingIds }: Pro
             onError={onMediaError}
           />
         ))}
+      {active.texts.map(({ clip, text }) => (
+        <div
+          key={clip.id}
+          className={`monitor-text ${text.background ? "boxed" : ""}`}
+          style={{
+            left: `${text.x * 100}%`,
+            top: `${text.y * 100}%`,
+            color: text.color,
+            fontSize: text.size * monitorHeight,
+          }}
+        >
+          {text.content}
+        </div>
+      ))}
       {(mediaError || (!playing && stillError)) && (
         <div className="monitor-message">{mediaError ?? stillError}</div>
       )}

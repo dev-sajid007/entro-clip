@@ -1,4 +1,4 @@
-import type { Clip, MediaAsset, Project, Track } from "./tauri";
+import type { Clip, MediaAsset, Project, TextOverlay, Track } from "./tauri";
 import { US_PER_SECOND, type Microseconds } from "./time";
 import { clipEnd } from "./timeline";
 
@@ -6,6 +6,11 @@ export interface ActiveClip {
   clip: Clip;
   track: Track;
   asset: MediaAsset;
+}
+
+export interface ActiveText {
+  clip: Clip;
+  text: TextOverlay;
 }
 
 export const containsTime = (clip: Clip, us: Microseconds) =>
@@ -19,16 +24,23 @@ export const sourceSecondsAt = (clip: Clip, us: Microseconds) =>
  * What is seen and heard at a time. Mirrors the backend rules: the top-most
  * visible video track wins the picture; audio comes from unmuted audio
  * tracks and from the embedded sound of clips on visible video tracks.
+ * Text on tracks above the picture is listed bottom-most first, the order
+ * to draw it in; text below the picture is covered by it.
  */
 export function activeAt(project: Project, us: Microseconds, missing: Set<string>) {
   const tracks = [...project.tracks].sort((a, b) => a.order - b.order);
   const assets = new Map(project.assets.map((a) => [a.id, a]));
   let visual: ActiveClip | null = null;
   const audio: ActiveClip[] = [];
+  const texts: ActiveText[] = [];
 
   for (const track of tracks) {
     const clip = track.clips.find((c) => c.enabled && containsTime(c, us));
-    const asset = clip && assets.get(clip.assetId);
+    if (clip?.text) {
+      if (track.kind === "video" && !track.hidden && !visual) texts.unshift({ clip, text: clip.text });
+      continue;
+    }
+    const asset = clip?.assetId ? assets.get(clip.assetId) : undefined;
     if (!clip || !asset || missing.has(asset.id)) continue;
 
     if (track.kind === "video") {
@@ -39,5 +51,5 @@ export function activeAt(project: Project, us: Microseconds, missing: Set<string
       audio.push({ clip, track, asset });
     }
   }
-  return { visual, audio };
+  return { visual, audio, texts };
 }

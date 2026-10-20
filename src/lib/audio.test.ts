@@ -6,7 +6,7 @@ const SEC = 1_000_000;
 
 function clip(audio: Partial<Clip["audio"]> = {}): Clip {
   return {
-    id: "c", assetId: "a", timelineStartUs: 10 * SEC, sourceInUs: 0, sourceOutUs: 4 * SEC, enabled: true,
+    id: "c", assetId: "a", timelineStartUs: 10 * SEC, sourceInUs: 0, sourceOutUs: 4 * SEC, enabled: true, text: null,
     audio: { gainDb: 0, fadeInUs: 0, fadeOutUs: 0, ...audio },
   };
 }
