@@ -1,0 +1,2 @@
+# Keep `tauri dev` from rebuilding when a project is saved here
+*.entrocut
