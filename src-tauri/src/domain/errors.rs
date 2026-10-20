@@ -20,6 +20,8 @@ pub enum AppError {
     NotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("cancelled")]
+    Cancelled,
     #[error("invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -37,6 +39,7 @@ impl AppError {
             AppError::UnsupportedMedia(_) => "unsupportedMedia",
             AppError::NotFound(_) => "notFound",
             AppError::InvalidRequest(_) => "invalidRequest",
+            AppError::Cancelled => "cancelled",
             AppError::Json(_) => "json",
             AppError::Io(_) => "io",
         }

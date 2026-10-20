@@ -5,7 +5,7 @@ use tauri::{AppHandle, Manager, State};
 use uuid::Uuid;
 
 use crate::domain::errors::{AppError, AppResult};
-use crate::domain::project::MediaAsset;
+use crate::domain::project::{MediaAsset, Project};
 use crate::services::{media_probe, thumbnail};
 use crate::state::{AppState, ProjectState};
 
@@ -28,6 +28,7 @@ pub struct ImportReport {
 /// assets. One bad file never aborts the rest of the import.
 #[tauri::command]
 pub async fn import_media(
+    app: AppHandle,
     state: State<'_, AppState>,
     paths: Vec<String>,
 ) -> AppResult<ImportReport> {
@@ -72,6 +73,7 @@ pub async fn import_media(
 
     if project.assets.len() != session.project.assets.len() {
         project.validate().map_err(AppError::InvalidProject)?;
+        allow_media_playback(&app, &project);
         session.commit(project);
     }
     Ok(ImportReport {
@@ -150,4 +152,15 @@ pub async fn generate_thumbnail(
     .inspect_err(|e| tracing::warn!(%asset_id, error = %e, "thumbnail failed"))?;
 
     Ok(thumb.display().to_string())
+}
+
+/// Lets the webview stream exactly the project's source files through the
+/// asset protocol (for preview playback), without opening up other paths.
+pub fn allow_media_playback(app: &AppHandle, project: &Project) {
+    let scope = app.asset_protocol_scope();
+    for asset in &project.assets {
+        if let Err(e) = scope.allow_file(&asset.path) {
+            tracing::warn!(path = %asset.path.display(), error = %e, "could not allow media file");
+        }
+    }
 }

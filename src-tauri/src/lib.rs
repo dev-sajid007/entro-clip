@@ -30,6 +30,7 @@ pub fn run() {
             commands::edit::apply_edit,
             commands::edit::undo_edit,
             commands::edit::redo_edit,
+            commands::preview::render_preview_frame,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

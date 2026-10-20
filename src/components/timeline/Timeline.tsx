@@ -53,6 +53,7 @@ interface Props {
   thumbnails: Record<string, Thumbnail>;
   selectedClipId: string | null;
   playheadUs: Microseconds;
+  followPlayhead: boolean;
   onSelectClip: (id: string | null) => void;
   onSeek: (us: Microseconds) => void;
   onEdit: (edit: Edit) => Promise<string | null>;
@@ -68,6 +69,7 @@ export function Timeline({
   thumbnails,
   selectedClipId,
   playheadUs,
+  followPlayhead,
   onSelectClip,
   onSeek,
   onEdit,
@@ -147,6 +149,15 @@ export function Timeline({
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [zoom]);
+
+  // Keep the playhead in view during playback.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!followPlayhead || !el) return;
+    const x = usToPx(playheadUs, zoom);
+    const visible = el.clientWidth - 140;
+    if (x < el.scrollLeft || x > el.scrollLeft + visible - 20) el.scrollLeft = Math.max(0, x - 40);
+  }, [followPlayhead, playheadUs, zoom]);
 
   const fit = () => {
     const width = scrollRef.current?.clientWidth ?? 800;

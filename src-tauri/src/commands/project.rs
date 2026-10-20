@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use tauri::State;
+use tauri::{AppHandle, State};
+
+use super::media::allow_media_playback;
 
 use crate::domain::errors::{AppError, AppResult};
 use crate::domain::project::{Project, ProjectSettings};
@@ -34,13 +36,18 @@ pub fn create_project(
 }
 
 #[tauri::command]
-pub async fn open_project(state: State<'_, AppState>, path: String) -> AppResult<ProjectState> {
+pub async fn open_project(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> AppResult<ProjectState> {
     let path = PathBuf::from(path);
     let load_path = path.clone();
     let project = tauri::async_runtime::spawn_blocking(move || project_store::load(&load_path))
         .await
         .map_err(|e| AppError::InvalidRequest(e.to_string()))??;
 
+    allow_media_playback(&app, &project);
     let mut session = state.session();
     *session = Session::new(project, Some(path.clone()));
     tracing::info!(path = %path.display(), "opened project");

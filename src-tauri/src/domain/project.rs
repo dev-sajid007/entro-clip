@@ -83,6 +83,20 @@ impl Clip {
     pub fn duration_us(&self) -> u64 {
         self.source_out_us.saturating_sub(self.source_in_us)
     }
+
+    pub fn end_us(&self) -> u64 {
+        self.timeline_start_us.saturating_add(self.duration_us())
+    }
+
+    /// Whether the clip covers `time_us` (start inclusive, end exclusive).
+    pub fn contains(&self, time_us: u64) -> bool {
+        time_us >= self.timeline_start_us && time_us < self.end_us()
+    }
+
+    /// Maps a timeline time inside this clip to a time in the source media.
+    pub fn source_time_at(&self, time_us: u64) -> u64 {
+        self.source_in_us + time_us.saturating_sub(self.timeline_start_us)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,6 +161,27 @@ impl Project {
 
     pub fn asset(&self, id: Uuid) -> Option<&MediaAsset> {
         self.assets.iter().find(|a| a.id == id)
+    }
+
+    /// Tracks in display order. Among video tracks, earlier tracks are drawn
+    /// on top of later ones.
+    pub fn tracks_in_order(&self) -> Vec<&Track> {
+        let mut tracks: Vec<&Track> = self.tracks.iter().collect();
+        tracks.sort_by_key(|t| t.order);
+        tracks
+    }
+
+    /// The top-most visible video or image clip at `time_us`, if any.
+    pub fn visual_clip_at(&self, time_us: u64) -> Option<(&Clip, &MediaAsset)> {
+        self.tracks_in_order()
+            .into_iter()
+            .filter(|t| t.kind == TrackKind::Video && !t.hidden)
+            .find_map(|t| {
+                t.clips
+                    .iter()
+                    .find(|c| c.enabled && c.contains(time_us))
+                    .and_then(|c| self.asset(c.asset_id).map(|a| (c, a)))
+            })
     }
 
     /// Checks every invariant from the project doc §6.4 and returns all
@@ -411,6 +446,36 @@ mod tests {
         project.assets[0] = asset.clone();
         project.tracks[1].clips.push(clip(&asset, 0, 0, 1_000_000));
         assert!(errors(&project).contains("incompatible asset"));
+    }
+
+    #[test]
+    fn finds_topmost_visible_clip() {
+        let (mut project, asset) = project_with_asset();
+        let mut overlay = Track::new("Video 2", TrackKind::Video, 0);
+        project.tracks[0].order = 1;
+        project.tracks[1].order = 2;
+        overlay.clips.push(clip(&asset, 2_000_000, 0, 1_000_000));
+        project.tracks[0]
+            .clips
+            .push(clip(&asset, 0, 1_000_000, 6_000_000));
+        let base_id = project.tracks[0].clips[0].id;
+        let overlay_id = overlay.clips[0].id;
+        project.tracks.push(overlay);
+
+        let at = |t| project.visual_clip_at(t).map(|(c, _)| c.id);
+        assert_eq!(at(1_000_000), Some(base_id));
+        assert_eq!(at(2_500_000), Some(overlay_id));
+        assert_eq!(at(5_000_000), None);
+        assert_eq!(
+            project.tracks[0].clips[0].source_time_at(1_000_000),
+            2_000_000
+        );
+
+        project.tracks[2].hidden = true;
+        assert_eq!(
+            project.visual_clip_at(2_500_000).map(|(c, _)| c.id),
+            Some(base_id)
+        );
     }
 
     #[test]

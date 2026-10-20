@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
 use std::sync::{Mutex, MutexGuard};
 
 use serde::Serialize;
@@ -116,6 +117,9 @@ pub struct ProjectState {
 pub struct AppState {
     session: Mutex<Session>,
     pub thumbnail_jobs: Semaphore,
+    /// Preview frames render one at a time; superseded requests are skipped.
+    pub preview_jobs: Semaphore,
+    pub preview_generation: AtomicU64,
 }
 
 impl AppState {
@@ -123,6 +127,8 @@ impl AppState {
         Self {
             session: Mutex::new(Session::untitled()),
             thumbnail_jobs: Semaphore::new(MAX_THUMBNAIL_JOBS),
+            preview_jobs: Semaphore::new(1),
+            preview_generation: AtomicU64::new(0),
         }
     }
 

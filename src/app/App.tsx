@@ -6,6 +6,8 @@ import { useProject } from "../features/project/useProject";
 import { MediaLibrary } from "../components/media-library/MediaLibrary";
 import { Inspector } from "../components/inspector/Inspector";
 import { Timeline, sortedTracks } from "../components/timeline/Timeline";
+import { PreviewMonitor } from "../components/preview/PreviewMonitor";
+import { usePlayback } from "../features/playback/usePlayback";
 
 function ToolBadge({ label, ok, title }: { label: string; ok: boolean; title: string }) {
   return (
@@ -53,7 +55,10 @@ export default function App() {
     if (id) setSelectedAssetId(null);
   };
 
-  const seek = useCallback((us: number) => setPlayheadUs(Math.max(0, us)), []);
+  const endUs = timelineEnd(tracks);
+  const setPlayhead = useCallback((us: number) => setPlayheadUs(us), []);
+  const playback = usePlayback(playheadUs, setPlayhead, endUs);
+  const { seek } = playback;
 
   const addToTimeline = async (asset: MediaAsset) => {
     const track = tracks.find((t) => trackAccepts(t, asset.kind, asset.hasAudio));
@@ -99,7 +104,9 @@ export default function App() {
       } else if (key === "home") {
         action = () => seek(0);
       } else if (key === "end") {
-        action = () => seek(timelineEnd(tracks));
+        action = () => seek(endUs);
+      } else if (key === " " || key === "k") {
+        action = playback.toggle;
       } else if (key === "escape") {
         action = () => selectClip(null);
       }
@@ -161,10 +168,31 @@ export default function App() {
             <button type="button" className="ghost" onClick={project.dismissNotice} aria-label="Dismiss">×</button>
           </div>
         )}
-        <div className="monitor" />
-        <div className="timecode">
-          {formatTimecode(playheadUs, frameRate)}
-          <span className="muted"> / {formatTimecode(timelineEnd(tracks), frameRate)}</span>
+        {state && (
+          <PreviewMonitor
+            project={state.project}
+            playheadUs={playheadUs}
+            playing={playback.playing}
+            missingIds={missingIds}
+          />
+        )}
+        <div className="transport">
+          <button type="button" className="ghost" onClick={() => seek(0)} title="Go to start (Home)" aria-label="Go to start">⏮</button>
+          <button
+            type="button"
+            className="play"
+            onClick={playback.toggle}
+            disabled={endUs === 0}
+            title="Play/Pause (Space)"
+            aria-label={playback.playing ? "Pause" : "Play"}
+          >
+            {playback.playing ? "❚❚" : "▶"}
+          </button>
+          <button type="button" className="ghost" onClick={() => seek(endUs)} title="Go to end (End)" aria-label="Go to end">⏭</button>
+          <span className="timecode">
+            {formatTimecode(playheadUs, frameRate)}
+            <span className="muted"> / {formatTimecode(endUs, frameRate)}</span>
+          </span>
         </div>
       </section>
 
@@ -184,6 +212,7 @@ export default function App() {
             thumbnails={project.thumbnails}
             selectedClipId={selectedClip?.id ?? null}
             playheadUs={playheadUs}
+            followPlayhead={playback.playing}
             onSelectClip={selectClip}
             onSeek={seek}
             onEdit={project.edit}

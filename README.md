@@ -9,6 +9,16 @@ See [EntroCut-Project-Documentation.md](EntroCut-Project-Documentation.md) for t
 - Rust (stable), Node.js 24+, pnpm
 - FFmpeg and FFprobe on `PATH`
 - Tauri system dependencies for your OS: https://v2.tauri.app/start/prerequisites/
+- Linux live preview playback uses WebKitGTK/GStreamer. For common codecs
+  install the GStreamer plugins, e.g. on Fedora `gstreamer1-plugin-libav`
+  (or `gstreamer1-plugin-openh264` for H.264 only). Paused still frames are
+  rendered by FFmpeg and do not depend on GStreamer.
+
+## Preview limitations
+
+- Paused: exact frames from FFmpeg, showing the top-most visible video track.
+- Playing: the top-most visual clip plays live; overlays are not composited
+  until export. Audio from all unmuted clips plays together.
 
 ## Development
 

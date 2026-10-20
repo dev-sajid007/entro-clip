@@ -134,3 +134,11 @@ export const generateThumbnail = (assetId: string) =>
 export const applyEdit = (edit: Edit) => invoke<EditResult>("apply_edit", { edit });
 export const undoEdit = () => invoke<ProjectState>("undo_edit");
 export const redoEdit = () => invoke<ProjectState>("redo_edit");
+
+export interface PreviewFrame {
+  path: string;
+  clipId: string;
+}
+
+export const renderPreviewFrame = (timeUs: Microseconds) =>
+  invoke<PreviewFrame | null>("render_preview_frame", { timeUs });
