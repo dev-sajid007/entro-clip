@@ -27,6 +27,9 @@ pub fn run() {
             commands::project::save_project,
             commands::media::import_media,
             commands::media::generate_thumbnail,
+            commands::edit::apply_edit,
+            commands::edit::undo_edit,
+            commands::edit::redo_edit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

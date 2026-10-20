@@ -4,13 +4,17 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ask, open, save } from "@tauri-apps/plugin-dialog";
 import {
   PROJECT_EXTENSION,
+  applyEdit,
   createProject,
   errorMessage,
   generateThumbnail,
   getProject,
   importMedia,
   openProject,
+  redoEdit,
   saveProject,
+  undoEdit,
+  type Edit,
   type ImportResult,
   type ProjectState,
 } from "../../lib/tauri";
@@ -69,6 +73,8 @@ export function useProject() {
   const dirtyRef = useRef(false);
   dirtyRef.current = state?.dirty ?? false;
   const requestedThumbs = useRef(new Set<string>());
+  // Edits run one at a time so responses can never apply out of order.
+  const editQueue = useRef<Promise<unknown>>(Promise.resolve());
 
   const run = useCallback(async (task: () => Promise<void>) => {
     setBusy(true);
@@ -184,6 +190,33 @@ export function useProject() {
     [run],
   );
 
+  const enqueue = useCallback(<T,>(task: () => Promise<T>): Promise<T | null> => {
+    const next = editQueue.current.then(task).catch((err) => {
+      setNotice({ kind: "error", text: errorMessage(err) });
+      return null;
+    });
+    editQueue.current = next;
+    return next;
+  }, []);
+
+  /** Applies an edit and returns the id of a newly created clip, if any. */
+  const edit = useCallback(
+    (e: Edit) =>
+      enqueue(async () => {
+        const result = await applyEdit(e);
+        setState(result.state);
+        return result.createdClipId;
+      }),
+    [enqueue],
+  );
+
+  const undo = useCallback(() => enqueue(async () => setState(await undoEdit())), [enqueue]);
+  const redo = useCallback(() => enqueue(async () => setState(await redoEdit())), [enqueue]);
+
+  const notify = useCallback((text: string, kind: Notice["kind"] = "error") => {
+    setNotice({ kind, text });
+  }, []);
+
   return {
     state,
     thumbnails,
@@ -195,5 +228,9 @@ export function useProject() {
     save: saveCurrent,
     saveAs,
     importFiles,
+    edit,
+    undo,
+    redo,
+    notify,
   };
 }

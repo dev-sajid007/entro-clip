@@ -81,6 +81,8 @@ export interface ProjectState {
   project: Project;
   path: string | null;
   dirty: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
   missingAssetIds: string[];
 }
 
@@ -94,6 +96,31 @@ export interface ImportReport {
   results: ImportResult[];
 }
 
+/** Mirrors `Edit` in src-tauri/src/domain/edit.rs. */
+export type Edit =
+  | { type: "addClip"; trackId: string; assetId: string; timelineStartUs: Microseconds }
+  | { type: "moveClip"; clipId: string; trackId: string; timelineStartUs: Microseconds }
+  | {
+      type: "trimClip";
+      clipId: string;
+      timelineStartUs: Microseconds;
+      sourceInUs: Microseconds;
+      sourceOutUs: Microseconds;
+    }
+  | { type: "splitClip"; clipId: string; atUs: Microseconds }
+  | { type: "deleteClip"; clipId: string }
+  | { type: "addTrack"; kind: TrackKind }
+  | { type: "deleteTrack"; trackId: string }
+  | { type: "updateTrack"; trackId: string; name?: string; muted?: boolean; hidden?: boolean };
+
+export interface EditResult {
+  state: ProjectState;
+  createdClipId: string | null;
+}
+
+/** Drag-and-drop payload type for assets dragged from the media library. */
+export const ASSET_DRAG_TYPE = "application/x-entrocut-asset";
+
 export const PROJECT_EXTENSION = "entrocut";
 
 export const systemCheck = () => invoke<SystemCheck>("system_check");
@@ -104,3 +131,6 @@ export const saveProject = (path?: string) => invoke<ProjectState>("save_project
 export const importMedia = (paths: string[]) => invoke<ImportReport>("import_media", { paths });
 export const generateThumbnail = (assetId: string) =>
   invoke<string>("generate_thumbnail", { assetId });
+export const applyEdit = (edit: Edit) => invoke<EditResult>("apply_edit", { edit });
+export const undoEdit = () => invoke<ProjectState>("undo_edit");
+export const redoEdit = () => invoke<ProjectState>("redo_edit");

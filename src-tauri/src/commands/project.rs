@@ -53,7 +53,7 @@ pub async fn save_project(
     state: State<'_, AppState>,
     path: Option<String>,
 ) -> AppResult<ProjectState> {
-    let (project, revision, target) = {
+    let (project, state_id, target) = {
         let session = state.session();
         let target = path
             .map(PathBuf::from)
@@ -61,7 +61,7 @@ pub async fn save_project(
             .ok_or_else(|| AppError::InvalidRequest("no save location chosen".into()))?;
         (
             session.project.clone(),
-            session.revision,
+            session.state_id,
             with_extension(target),
         )
     };
@@ -74,7 +74,7 @@ pub async fn save_project(
     let mut session = state.session();
     session.path = Some(target.clone());
     // Edits made while the file was being written keep the project dirty.
-    session.saved_revision = revision;
+    session.saved_state_id = state_id;
     tracing::info!(path = %target.display(), "saved project");
     Ok(session.snapshot())
 }

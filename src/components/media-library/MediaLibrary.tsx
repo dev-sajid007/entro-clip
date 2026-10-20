@@ -1,4 +1,4 @@
-import type { MediaAsset } from "../../lib/tauri";
+import { ASSET_DRAG_TYPE, type MediaAsset } from "../../lib/tauri";
 import { formatDuration } from "../../lib/time";
 import type { Thumbnail } from "../../features/project/useProject";
 
@@ -10,6 +10,7 @@ interface Props {
   busy: boolean;
   onSelect: (id: string) => void;
   onImport: () => void;
+  onAddToTimeline: (asset: MediaAsset) => void;
 }
 
 const KIND_LABEL = { video: "Video", audio: "Audio", image: "Image" } as const;
@@ -41,7 +42,16 @@ function Preview({ asset, thumb, missing }: { asset: MediaAsset; thumb?: Thumbna
   );
 }
 
-export function MediaLibrary({ assets, missingIds, thumbnails, selectedId, busy, onSelect, onImport }: Props) {
+export function MediaLibrary({
+  assets,
+  missingIds,
+  thumbnails,
+  selectedId,
+  busy,
+  onSelect,
+  onImport,
+  onAddToTimeline,
+}: Props) {
   return (
     <div className="media-library">
       <div className="panel-header">
@@ -63,7 +73,13 @@ export function MediaLibrary({ assets, missingIds, thumbnails, selectedId, busy,
                   type="button"
                   className={`asset ${asset.id === selectedId ? "selected" : ""}`}
                   onClick={() => onSelect(asset.id)}
-                  title={asset.path}
+                  onDoubleClick={() => onAddToTimeline(asset)}
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData(ASSET_DRAG_TYPE, asset.id);
+                    e.dataTransfer.effectAllowed = "copy";
+                  }}
+                  title={`${asset.path}\nDrag to the timeline or double-click to append`}
                 >
                   <Preview asset={asset} thumb={thumbnails[asset.id]} missing={missing} />
                   <span className="asset-text">

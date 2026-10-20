@@ -1,8 +1,9 @@
-import type { MediaAsset, ProjectSettings } from "../../lib/tauri";
-import { formatDuration, formatFrameRate } from "../../lib/time";
+import type { Clip, MediaAsset, ProjectSettings } from "../../lib/tauri";
+import { formatDuration, formatFrameRate, formatTimecode } from "../../lib/time";
 
 interface Props {
   asset: MediaAsset | null;
+  clip: Clip | null;
   missing: boolean;
   settings: ProjectSettings | null;
 }
@@ -16,7 +17,28 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function Inspector({ asset, missing, settings }: Props) {
+export function Inspector({ asset, clip, missing, settings }: Props) {
+  const fps = settings?.frameRate ?? { numerator: 30, denominator: 1 };
+  const tc = (us: number) => formatTimecode(us, fps);
+
+  if (clip) {
+    const duration = clip.sourceOutUs - clip.sourceInUs;
+    return (
+      <>
+        <h2>Clip properties</h2>
+        {missing && <p className="badge bad">Source file is missing</p>}
+        <dl className="props">
+          <Row label="Source" value={asset?.name ?? "Missing asset"} />
+          <Row label="Start" value={tc(clip.timelineStartUs)} />
+          <Row label="End" value={tc(clip.timelineStartUs + duration)} />
+          <Row label="Duration" value={tc(duration)} />
+          <Row label="Source in" value={tc(clip.sourceInUs)} />
+          <Row label="Source out" value={tc(clip.sourceOutUs)} />
+        </dl>
+      </>
+    );
+  }
+
   if (asset) {
     return (
       <>

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { systemCheck, type SystemCheck } from "../lib/tauri";
-import { formatTimecode } from "../lib/time";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { systemCheck, type MediaAsset, type SystemCheck } from "../lib/tauri";
+import { US_PER_SECOND, formatTimecode } from "../lib/time";
+import { frameDurationUs, snapToFrame, timelineEnd, trackAccepts, trackEnd } from "../lib/timeline";
 import { useProject } from "../features/project/useProject";
 import { MediaLibrary } from "../components/media-library/MediaLibrary";
 import { Inspector } from "../components/inspector/Inspector";
+import { Timeline, sortedTracks } from "../components/timeline/Timeline";
 
 function ToolBadge({ label, ok, title }: { label: string; ok: boolean; title: string }) {
   return (
@@ -20,38 +22,96 @@ function isTypingTarget(target: EventTarget | null): boolean {
   );
 }
 
+const DEFAULT_RATE = { numerator: 30, denominator: 1 };
+
 export default function App() {
   const [check, setCheck] = useState<SystemCheck | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const [playheadUs, setPlayheadUs] = useState(0);
   const project = useProject();
   const { state } = project;
+  const frameRate = state?.project.settings.frameRate ?? DEFAULT_RATE;
 
   useEffect(() => {
     systemCheck().then(setCheck).catch(() => setCheck(null));
   }, []);
 
+  const tracks = useMemo(() => (state ? sortedTracks(state.project) : []), [state]);
+  const selectedClip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId) ?? null;
+  const selectedAsset =
+    state?.project.assets.find((a) => a.id === (selectedClip?.assetId ?? selectedAssetId)) ?? null;
+  const missingIds = useMemo(() => new Set(state?.missingAssetIds ?? []), [state?.missingAssetIds]);
+  const fileLabel = state?.path?.split(/[\\/]/).pop();
+
+  const selectAsset = (id: string) => {
+    setSelectedAssetId(id);
+    setSelectedClipId(null);
+  };
+  const selectClip = (id: string | null) => {
+    setSelectedClipId(id);
+    if (id) setSelectedAssetId(null);
+  };
+
+  const seek = useCallback((us: number) => setPlayheadUs(Math.max(0, us)), []);
+
+  const addToTimeline = async (asset: MediaAsset) => {
+    const track = tracks.find((t) => trackAccepts(t, asset.kind, asset.hasAudio));
+    if (!track) {
+      project.notify(`Add a ${asset.kind === "audio" ? "audio" : "video"} track first.`);
+      return;
+    }
+    const id = await project.edit({
+      type: "addClip",
+      trackId: track.id,
+      assetId: asset.id,
+      timelineStartUs: trackEnd(track),
+    });
+    if (id) selectClip(id);
+  };
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey || isTypingTarget(e.target)) return;
+      if (isTypingTarget(e.target) || e.altKey) return;
       const key = e.key.toLowerCase();
-      const action =
-        key === "s" ? (e.shiftKey ? project.saveAs : project.save)
-        : key === "o" ? project.openProject
-        : key === "n" ? project.newProject
-        : key === "i" ? project.importFiles
-        : null;
-      if (action && !project.busy) {
+      const ctrl = e.ctrlKey || e.metaKey;
+      let action: (() => unknown) | null = null;
+
+      if (ctrl) {
+        if (key === "z") action = e.shiftKey ? project.redo : project.undo;
+        else if (key === "y") action = project.redo;
+        else if (project.busy) return;
+        else if (key === "s") action = e.shiftKey ? project.saveAs : project.save;
+        else if (key === "o") action = project.openProject;
+        else if (key === "n") action = project.newProject;
+        else if (key === "i") action = project.importFiles;
+      } else if ((key === "delete" || key === "backspace") && selectedClip) {
+        action = () => {
+          setSelectedClipId(null);
+          return project.edit({ type: "deleteClip", clipId: selectedClip.id });
+        };
+      } else if (key === "s" && selectedClip) {
+        action = () => project.edit({ type: "splitClip", clipId: selectedClip.id, atUs: playheadUs });
+      } else if (key === "arrowleft" || key === "arrowright") {
+        const step = e.shiftKey ? US_PER_SECOND : frameDurationUs(frameRate);
+        const dir = key === "arrowleft" ? -1 : 1;
+        action = () => seek(snapToFrame(playheadUs + dir * step, frameRate));
+      } else if (key === "home") {
+        action = () => seek(0);
+      } else if (key === "end") {
+        action = () => seek(timelineEnd(tracks));
+      } else if (key === "escape") {
+        action = () => selectClip(null);
+      }
+
+      if (action) {
         e.preventDefault();
-        action();
+        void action();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [project]);
-
-  const missingIds = useMemo(() => new Set(state?.missingAssetIds ?? []), [state?.missingAssetIds]);
-  const selected = state?.project.assets.find((a) => a.id === selectedId) ?? null;
-  const fileLabel = state?.path?.split(/[\\/]/).pop();
+  });
 
   return (
     <div className="editor">
@@ -62,6 +122,9 @@ export default function App() {
           <button type="button" className="ghost" onClick={project.openProject} disabled={project.busy} title="Ctrl+O">Open</button>
           <button type="button" className="ghost" onClick={project.save} disabled={project.busy || !state} title="Ctrl+S">Save</button>
           <button type="button" className="ghost" onClick={project.saveAs} disabled={project.busy || !state} title="Ctrl+Shift+S">Save As</button>
+          <span className="divider" />
+          <button type="button" className="ghost" onClick={project.undo} disabled={!state?.canUndo} title="Ctrl+Z">Undo</button>
+          <button type="button" className="ghost" onClick={project.redo} disabled={!state?.canRedo} title="Ctrl+Shift+Z">Redo</button>
         </div>
         <span className="project-title" title={state?.path ?? "Not saved yet"}>
           {state?.project.name ?? "…"}
@@ -83,10 +146,11 @@ export default function App() {
           assets={state?.project.assets ?? []}
           missingIds={missingIds}
           thumbnails={project.thumbnails}
-          selectedId={selectedId}
+          selectedId={selectedClip ? null : selectedAssetId}
           busy={project.busy}
-          onSelect={setSelectedId}
+          onSelect={selectAsset}
           onImport={project.importFiles}
+          onAddToTimeline={addToTimeline}
         />
       </aside>
 
@@ -99,21 +163,35 @@ export default function App() {
         )}
         <div className="monitor" />
         <div className="timecode">
-          {formatTimecode(0, state?.project.settings.frameRate ?? { numerator: 30, denominator: 1 })}
+          {formatTimecode(playheadUs, frameRate)}
+          <span className="muted"> / {formatTimecode(timelineEnd(tracks), frameRate)}</span>
         </div>
       </section>
 
       <aside className="panel inspector" aria-label="Inspector">
-        <Inspector asset={selected} missing={selected ? missingIds.has(selected.id) : false} settings={state?.project.settings ?? null} />
+        <Inspector
+          asset={selectedAsset}
+          clip={selectedClip}
+          missing={selectedAsset ? missingIds.has(selectedAsset.id) : false}
+          settings={state?.project.settings ?? null}
+        />
       </aside>
 
       <section className="panel timeline" aria-label="Timeline">
-        {(state?.project.tracks ?? []).map((track) => (
-          <div key={track.id} className="track">
-            <span>{track.name}</span>
-          </div>
-        ))}
+        {state && (
+          <Timeline
+            project={state.project}
+            thumbnails={project.thumbnails}
+            selectedClipId={selectedClip?.id ?? null}
+            playheadUs={playheadUs}
+            onSelectClip={selectClip}
+            onSeek={seek}
+            onEdit={project.edit}
+            onNotify={project.notify}
+          />
+        )}
       </section>
     </div>
   );
 }
+

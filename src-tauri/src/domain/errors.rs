@@ -12,6 +12,8 @@ pub enum AppError {
     InvalidProject(Vec<String>),
     #[error("project schema version {0} is not supported by this version of EntroCut")]
     UnsupportedSchema(u64),
+    #[error("{0}")]
+    InvalidEdit(String),
     #[error("unsupported media: {0}")]
     UnsupportedMedia(String),
     #[error("not found: {0}")]
@@ -31,6 +33,7 @@ impl AppError {
             AppError::ToolFailed { .. } => "toolFailed",
             AppError::InvalidProject(_) => "invalidProject",
             AppError::UnsupportedSchema(_) => "unsupportedSchema",
+            AppError::InvalidEdit(_) => "invalidEdit",
             AppError::UnsupportedMedia(_) => "unsupportedMedia",
             AppError::NotFound(_) => "notFound",
             AppError::InvalidRequest(_) => "invalidRequest",

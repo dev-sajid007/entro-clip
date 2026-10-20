@@ -44,8 +44,8 @@ pub async fn import_media(
     .map_err(|e| AppError::InvalidRequest(e.to_string()))?;
 
     let mut session = state.session();
+    let mut project = session.project.clone();
     let mut results = Vec::with_capacity(probed.len());
-    let mut changed = false;
 
     for (path, result) in probed {
         let asset = match result {
@@ -56,7 +56,7 @@ pub async fn import_media(
                 continue;
             }
         };
-        if let Some(existing) = session.project.assets.iter().find(|a| a.path == asset.path) {
+        if let Some(existing) = project.assets.iter().find(|a| a.path == asset.path) {
             results.push(ImportResult::Duplicate {
                 path,
                 asset_id: existing.id,
@@ -67,12 +67,12 @@ pub async fn import_media(
             path,
             asset_id: asset.id,
         });
-        session.project.assets.push(asset);
-        changed = true;
+        project.assets.push(asset);
     }
 
-    if changed {
-        session.mark_changed();
+    if project.assets.len() != session.project.assets.len() {
+        project.validate().map_err(AppError::InvalidProject)?;
+        session.commit(project);
     }
     Ok(ImportReport {
         state: session.snapshot(),

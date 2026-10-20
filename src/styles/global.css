@@ -21,7 +21,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
   display: grid;
   height: 100%;
   grid-template-columns: 260px 1fr 280px;
-  grid-template-rows: 44px minmax(0, 1fr) 240px;
+  grid-template-rows: 44px minmax(0, 1fr) 280px;
   grid-template-areas:
     "top top top"
     "library preview inspector"
@@ -41,8 +41,7 @@ h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: 
 .monitor { width: min(100%, 960px); aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--border); }
 .timecode { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
 
-.timeline { grid-area: timeline; display: flex; flex-direction: column; gap: 4px; }
-.track { height: 48px; display: flex; align-items: center; padding-left: 8px; background: var(--bg); border-radius: 4px; color: var(--muted); }
+.timeline { grid-area: timeline; padding: 0; overflow: hidden; }
 
 .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
 .badge.ok { color: var(--accent); }
@@ -81,3 +80,38 @@ button.ghost:hover:not(:disabled) { background: var(--border); }
 .notice.error { border-color: var(--danger); }
 .notice.info { border-color: var(--accent); }
 .notice button { padding: 0 6px; }
+
+.divider { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+
+/* Timeline */
+.timeline-root { --track-header: 140px; --track-h: 56px; display: flex; flex-direction: column; height: 100%; }
+.timeline-toolbar { display: flex; align-items: center; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.timeline-toolbar button { font-size: 12px; }
+.timeline-toolbar input[type="range"] { width: 120px; accent-color: var(--accent); }
+.toggle { display: flex; align-items: center; gap: 4px; margin-right: 8px; color: var(--muted); }
+.timeline-scroll { flex: 1; overflow: auto; position: relative; user-select: none; }
+.timeline-content { position: relative; min-width: 100%; }
+.tl-row { display: flex; height: var(--track-h); border-bottom: 1px solid var(--border); }
+.tl-row.ruler-row { height: 24px; position: sticky; top: 0; z-index: 3; background: var(--panel); }
+.tl-head { position: sticky; left: 0; z-index: 2; width: var(--track-header); flex: none; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 6px 0 10px; background: var(--panel); border-right: 1px solid var(--border); font-size: 12px; }
+.track-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.track-actions { display: flex; gap: 2px; }
+button.icon { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 12px; }
+button.icon:hover { color: var(--text); background: var(--border); }
+button.icon.on { color: var(--danger); }
+.ruler { position: relative; flex: 1; cursor: text; }
+.tick { position: absolute; top: 0; height: 100%; padding-left: 4px; border-left: 1px solid var(--border); font-size: 10px; line-height: 24px; color: var(--muted); font-variant-numeric: tabular-nums; pointer-events: none; }
+.lane { position: relative; flex: 1; background: var(--bg); }
+.clip { position: absolute; top: 4px; bottom: 4px; border-radius: 4px; overflow: hidden; cursor: grab; border: 1px solid transparent; background-color: #3b5bdb; background-size: auto 100%; background-repeat: repeat-x; }
+.clip.audio { background-color: #2b8a3e; }
+.clip.image { background-color: #9c36b5; }
+.clip.selected { border-color: #fff; box-shadow: 0 0 0 1px var(--accent); }
+.clip.dragging { opacity: 0.8; cursor: grabbing; z-index: 1; }
+.clip.invalid { border-color: var(--danger); opacity: 0.5; }
+.clip.inactive { filter: grayscale(1) brightness(0.6); }
+.clip-label { position: absolute; left: 8px; right: 8px; bottom: 2px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-shadow: 0 1px 2px #000; pointer-events: none; }
+.handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.handle.start { left: 0; }
+.handle.end { right: 0; }
+.clip:hover .handle, .clip.selected .handle { background: rgba(255, 255, 255, 0.35); }
+.playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--danger); pointer-events: none; z-index: 1; }
