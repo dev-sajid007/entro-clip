@@ -6,7 +6,11 @@ use uuid::Uuid;
 
 use super::time::Rational;
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
+
+/// Gain limits for clips and tracks, in decibels.
+pub const MIN_GAIN_DB: f64 = -60.0;
+pub const MAX_GAIN_DB: f64 = 12.0;
 
 const MAX_DIMENSION: u32 = 8192;
 const MAX_FPS: u64 = 240;
@@ -76,6 +80,18 @@ pub struct Clip {
     pub source_in_us: u64,
     pub source_out_us: u64,
     pub enabled: bool,
+    #[serde(default)]
+    pub audio: ClipAudio,
+}
+
+/// Per-clip sound settings. Fades are linear and measured from the clip's
+/// edges on the timeline; together they never exceed the clip's duration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipAudio {
+    pub gain_db: f64,
+    pub fade_in_us: u64,
+    pub fade_out_us: u64,
 }
 
 impl Clip {
@@ -97,6 +113,14 @@ impl Clip {
     pub fn source_time_at(&self, time_us: u64) -> u64 {
         self.source_in_us + time_us.saturating_sub(self.timeline_start_us)
     }
+
+    /// Shortens fades that no longer fit after the clip got shorter,
+    /// keeping as much of the fade-in as possible.
+    pub fn fit_fades(&mut self) {
+        let duration = self.duration_us();
+        self.audio.fade_in_us = self.audio.fade_in_us.min(duration);
+        self.audio.fade_out_us = self.audio.fade_out_us.min(duration - self.audio.fade_in_us);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -108,6 +132,9 @@ pub struct Track {
     pub order: u32,
     pub muted: bool,
     pub hidden: bool,
+    /// Volume applied to the sound of every clip on the track.
+    #[serde(default)]
+    pub gain_db: f64,
     pub clips: Vec<Clip>,
 }
 
@@ -120,6 +147,7 @@ impl Track {
             order,
             muted: false,
             hidden: false,
+            gain_db: 0.0,
             clips: Vec::new(),
         }
     }
@@ -233,7 +261,17 @@ impl Project {
     }
 
     fn validate_track(&self, track: &Track, problems: &mut Vec<String>) {
+        if !valid_gain(track.gain_db) {
+            problems.push(format!("track '{}' has an invalid volume", track.name));
+        }
         for clip in &track.clips {
+            let audio = clip.audio;
+            if !valid_gain(audio.gain_db) {
+                problems.push(format!("clip {} has an invalid volume", clip.id));
+            }
+            if audio.fade_in_us.saturating_add(audio.fade_out_us) > clip.duration_us() {
+                problems.push(format!("clip {} fades are longer than the clip", clip.id));
+            }
             let Some(asset) = self.asset(clip.asset_id) else {
                 problems.push(format!(
                     "clip {} references missing asset {}",
@@ -285,6 +323,10 @@ impl Project {
             }
         }
     }
+}
+
+fn valid_gain(db: f64) -> bool {
+    (MIN_GAIN_DB..=MAX_GAIN_DB).contains(&db)
 }
 
 pub(crate) fn validate_settings(settings: &ProjectSettings, problems: &mut Vec<String>) {
@@ -348,6 +390,7 @@ mod tests {
             source_in_us: src_in,
             source_out_us: src_out,
             enabled: true,
+            audio: ClipAudio::default(),
         }
     }
 
@@ -440,6 +483,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_bad_volume_and_fades() {
+        let (mut project, asset) = project_with_asset();
+        let mut c = clip(&asset, 0, 0, 2_000_000);
+        c.audio = ClipAudio {
+            gain_db: 20.0,
+            fade_in_us: 1_500_000,
+            fade_out_us: 1_000_000,
+        };
+        project.tracks[0].clips.push(c);
+        project.tracks[1].gain_db = f64::NAN;
+        let errs = errors(&project);
+        assert!(errs.contains("clip") && errs.contains("invalid volume"));
+        assert!(errs.contains("track 'Audio 1' has an invalid volume"));
+        assert!(errs.contains("fades are longer than the clip"));
+    }
+
+    #[test]
+    fn fit_fades_keeps_fade_in_first() {
+        let (_, asset) = project_with_asset();
+        let mut c = clip(&asset, 0, 0, 3_000_000);
+        c.audio.fade_in_us = 2_000_000;
+        c.audio.fade_out_us = 1_000_000;
+        c.source_out_us = 2_500_000;
+        c.fit_fades();
+        assert_eq!(
+            (c.audio.fade_in_us, c.audio.fade_out_us),
+            (2_000_000, 500_000)
+        );
+        c.source_out_us = 1_000_000;
+        c.fit_fades();
+        assert_eq!((c.audio.fade_in_us, c.audio.fade_out_us), (1_000_000, 0));
+    }
+
+    #[test]
     fn rejects_incompatible_track() {
         let (mut project, mut asset) = project_with_asset();
         asset.has_audio = false;
@@ -482,8 +559,9 @@ mod tests {
     fn serializes_with_camel_case_fields() {
         let project = Project::new("Test", ProjectSettings::default());
         let json = serde_json::to_value(&project).unwrap();
-        assert_eq!(json["schemaVersion"], 1);
+        assert_eq!(json["schemaVersion"], SCHEMA_VERSION);
         assert_eq!(json["settings"]["frameRate"]["numerator"], 30);
         assert_eq!(json["tracks"][0]["kind"], "video");
+        assert_eq!(json["tracks"][0]["gainDb"], 0.0);
     }
 }

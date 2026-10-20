@@ -61,16 +61,21 @@ pub fn load(path: &Path) -> AppResult<Project> {
     Ok(project)
 }
 
-/// Upgrades older schema versions to `SCHEMA_VERSION`. Only v1 exists so far.
-fn migrate(value: Value) -> AppResult<Value> {
-    let version = value
-        .get("schemaVersion")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| AppError::InvalidProject(vec!["missing schemaVersion".into()]))?;
+/// Upgrades older schema versions to `SCHEMA_VERSION`, one step at a time.
+fn migrate(mut value: Value) -> AppResult<Value> {
+    loop {
+        let version = value
+            .get("schemaVersion")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AppError::InvalidProject(vec!["missing schemaVersion".into()]))?;
 
-    match version {
-        v if v == u64::from(SCHEMA_VERSION) => Ok(value),
-        v => Err(AppError::UnsupportedSchema(v)),
+        match version {
+            v if v == u64::from(SCHEMA_VERSION) => return Ok(value),
+            // v2 added clip audio settings and track gain. Both default to
+            // "unchanged" when absent, so only the version moves.
+            1 => value["schemaVersion"] = 2.into(),
+            v => return Err(AppError::UnsupportedSchema(v)),
+        }
     }
 }
 
@@ -118,6 +123,23 @@ mod tests {
         fs::write(&path, json.to_string()).unwrap();
 
         assert!(matches!(load(&path), Err(AppError::UnsupportedSchema(99))));
+    }
+
+    #[test]
+    fn migrates_v1_projects() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.entrocut");
+        let mut json =
+            serde_json::to_value(Project::new("Old", ProjectSettings::default())).unwrap();
+        json["schemaVersion"] = 1.into();
+        for track in json["tracks"].as_array_mut().unwrap() {
+            track.as_object_mut().unwrap().remove("gainDb");
+        }
+        fs::write(&path, json.to_string()).unwrap();
+
+        let project = load(&path).unwrap();
+        assert_eq!(project.schema_version, SCHEMA_VERSION);
+        assert!(project.tracks.iter().all(|t| t.gain_db == 0.0));
     }
 
     #[test]

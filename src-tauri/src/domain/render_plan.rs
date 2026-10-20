@@ -134,6 +134,18 @@ pub struct Placement {
     pub start_us: u64,
 }
 
+/// A sound source placed on the timeline, with its combined clip and track
+/// gain and its fades.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AudioSource {
+    pub input: usize,
+    pub start_us: u64,
+    pub duration_us: u64,
+    pub gain_db: f64,
+    pub fade_in_us: u64,
+    pub fade_out_us: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderPlan {
     pub settings: ExportSettings,
@@ -141,7 +153,7 @@ pub struct RenderPlan {
     pub inputs: Vec<RenderInput>,
     /// Video layers from bottom to top.
     pub video_layers: Vec<Placement>,
-    pub audio_sources: Vec<Placement>,
+    pub audio_sources: Vec<AudioSource>,
 }
 
 /// Builds a render plan using the same rules as the preview: visible video
@@ -198,11 +210,38 @@ pub fn build(project: &Project, settings: ExportSettings) -> AppResult<RenderPla
                 plan.video_layers.push(placement);
             }
             if asset.has_audio {
-                plan.audio_sources.push(placement);
+                plan.audio_sources.push(AudioSource {
+                    input,
+                    start_us: clip.timeline_start_us,
+                    duration_us: clip.duration_us(),
+                    gain_db: clip.audio.gain_db + track.gain_db,
+                    fade_in_us: clip.audio.fade_in_us,
+                    fade_out_us: clip.audio.fade_out_us,
+                });
             }
         }
     }
     Ok(plan)
+}
+
+/// Gain and fade filters for one source, each followed by a comma, or
+/// nothing when the source plays unchanged. Fades are timed from the start
+/// of the trimmed source, before it is delayed into place.
+fn audio_adjustments(src: &AudioSource) -> String {
+    let mut filters = String::new();
+    if src.gain_db != 0.0 {
+        filters.push_str(&format!("volume={:.2}dB,", src.gain_db));
+    }
+    if src.fade_in_us > 0 {
+        let d = format_us_as_seconds(src.fade_in_us);
+        filters.push_str(&format!("afade=t=in:st=0:d={d},"));
+    }
+    if src.fade_out_us > 0 {
+        let st = format_us_as_seconds(src.duration_us.saturating_sub(src.fade_out_us));
+        let d = format_us_as_seconds(src.fade_out_us);
+        filters.push_str(&format!("afade=t=out:st={st}:d={d},"));
+    }
+    filters
 }
 
 fn rate(r: Rational) -> String {
@@ -248,8 +287,9 @@ impl RenderPlan {
                 let delay = u128::from(src.start_us) * u128::from(sr) / u128::from(US_PER_SECOND);
                 parts.push(format!(
                     "[{}:a]aresample={sr},aformat=sample_fmts=fltp:channel_layouts=stereo,\
-                     asetpts=PTS-STARTPTS,adelay=delays={delay}S:all=1[a{j}]",
-                    src.input
+                     asetpts=PTS-STARTPTS,{}adelay=delays={delay}S:all=1[a{j}]",
+                    src.input,
+                    audio_adjustments(src),
                 ));
                 labels.push_str(&format!("[a{j}]"));
             }
@@ -367,7 +407,7 @@ impl RenderPlan {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::project::{Clip, MediaAsset, Track};
+    use crate::domain::project::{Clip, ClipAudio, MediaAsset, Track};
     use uuid::Uuid;
 
     const SEC: u64 = 1_000_000;
@@ -394,6 +434,7 @@ mod tests {
             source_in_us: src_in,
             source_out_us: src_in + len,
             enabled: true,
+            audio: Default::default(),
         }
     }
 
@@ -506,6 +547,30 @@ mod tests {
         assert!(graph.contains("adelay=delays=24000S:all=1[a1]"));
         assert!(graph.contains("amix=inputs=2:duration=longest:normalize=0"));
         assert!(graph.ends_with("atrim=duration=10.500000[aout]"));
+    }
+
+    #[test]
+    fn applies_clip_and_track_gain_and_fades() {
+        let mut p = sample_project();
+        let music = &mut p.tracks[1];
+        music.gain_db = -6.0;
+        music.clips[0].audio = ClipAudio {
+            gain_db: 2.5,
+            fade_in_us: SEC,
+            fade_out_us: 2 * SEC,
+        };
+        let plan = build(&p, settings()).unwrap();
+        let music = plan.audio_sources[1];
+        assert_eq!(music.gain_db, -3.5);
+
+        let graph = plan.filter_graph();
+        // The 10 s music clip fades in over 1 s and out over its last 2 s.
+        assert!(graph.contains(
+            "asetpts=PTS-STARTPTS,volume=-3.50dB,afade=t=in:st=0:d=1.000000,\
+             afade=t=out:st=8.000000:d=2.000000,adelay=delays=24000S:all=1[a1]"
+        ));
+        // The video's sound is unchanged.
+        assert!(graph.contains("asetpts=PTS-STARTPTS,adelay=delays=0S:all=1[a0]"));
     }
 
     #[test]

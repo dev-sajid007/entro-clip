@@ -133,3 +133,13 @@ button.icon.on { color: var(--danger); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .export-error { color: var(--danger); white-space: pre-line; }
 .export-dialog .path { overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+
+/* Inspector controls */
+h2.section { margin-top: 16px; }
+.controls { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.control { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 4px 8px; }
+.control > span:first-child { grid-column: 1 / -1; color: var(--muted); }
+.control input[type="range"] { width: 100%; accent-color: var(--accent); }
+.control output { min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
+.control input[type="number"] { width: 100%; box-sizing: border-box; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; }
+.hint { font-size: 12px; margin: 8px 0 0; }

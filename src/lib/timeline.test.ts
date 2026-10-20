@@ -18,11 +18,14 @@ import {
 const SEC = 1_000_000;
 
 function clip(id: string, start: number, inUs: number, outUs: number): Clip {
-  return { id, assetId: "a", timelineStartUs: start, sourceInUs: inUs, sourceOutUs: outUs, enabled: true };
+  return {
+    id, assetId: "a", timelineStartUs: start, sourceInUs: inUs, sourceOutUs: outUs, enabled: true,
+    audio: { gainDb: 0, fadeInUs: 0, fadeOutUs: 0 },
+  };
 }
 
 function track(kind: Track["kind"], clips: Clip[]): Track {
-  return { id: `t-${kind}`, name: kind, kind, order: 0, muted: false, hidden: false, clips };
+  return { id: `t-${kind}`, name: kind, kind, order: 0, muted: false, hidden: false, gainDb: 0, clips };
 }
 
 describe("pixel/time conversion", () => {

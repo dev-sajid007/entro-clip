@@ -223,7 +223,9 @@ fn verify(path: &Path, expected_us: u64) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::project::{Clip, MediaAsset, Project, ProjectSettings, Track, TrackKind};
+    use crate::domain::project::{
+        Clip, ClipAudio, MediaAsset, Project, ProjectSettings, Track, TrackKind,
+    };
     use crate::domain::render_plan::{Quality, build, resolve_settings};
     use crate::domain::time::Rational;
     use crate::services::thumbnail::tests::{ffmpeg_available, make_test_video};
@@ -328,8 +330,15 @@ mod tests {
             source_in_us: src_in,
             source_out_us: src_in + len,
             enabled: true,
+            audio: Default::default(),
         };
-        project.tracks[0].clips.push(clip(SEC, 0, 2 * SEC));
+        let mut main = clip(SEC, 0, 2 * SEC);
+        main.audio = ClipAudio {
+            gain_db: -6.0,
+            fade_in_us: 500_000,
+            fade_out_us: 500_000,
+        };
+        project.tracks[0].clips.push(main);
         let mut overlay = Track::new("Video 2", TrackKind::Video, 0);
         overlay.clips.push(clip(1_500_000, SEC, SEC));
         project.tracks[0].order = 1;
@@ -385,6 +394,7 @@ mod tests {
             source_in_us: 0,
             source_out_us: SEC,
             enabled: true,
+            audio: Default::default(),
         });
         project.assets.push(asset);
         let export = resolve_settings(

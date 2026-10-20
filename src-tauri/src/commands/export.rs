@@ -243,6 +243,7 @@ mod tests {
             source_in_us: 0,
             source_out_us: 1_000_000,
             enabled: true,
+            audio: Default::default(),
         });
         project.assets.push(asset);
         project

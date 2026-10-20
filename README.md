@@ -19,6 +19,8 @@ See [EntroCut-Project-Documentation.md](EntroCut-Project-Documentation.md) for t
 - Paused: exact frames from FFmpeg, showing the top-most visible video track.
 - Playing: the top-most visual clip plays live; overlays are not composited
   until export. Audio from all unmuted clips plays together.
+- Clip and track volume and fades apply during playback, but boosts above
+  0 dB are only audible in the export.
 
 ## Development
 

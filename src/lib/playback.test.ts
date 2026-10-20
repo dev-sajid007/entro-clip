@@ -9,14 +9,15 @@ const asset = (id: string, kind: MediaAsset["kind"], hasAudio: boolean): MediaAs
 });
 const clip = (id: string, assetId: string, start: number, len: number): Clip => ({
   id, assetId, timelineStartUs: start, sourceInUs: SEC, sourceOutUs: SEC + len, enabled: true,
+  audio: { gainDb: 0, fadeInUs: 0, fadeOutUs: 0 },
 });
 const track = (id: string, kind: Track["kind"], order: number, clips: Clip[], flags: Partial<Track> = {}): Track => ({
-  id, name: id, kind, order, muted: false, hidden: false, clips, ...flags,
+  id, name: id, kind, order, muted: false, hidden: false, gainDb: 0, clips, ...flags,
 });
 
 function project(tracks: Track[]): Project {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     id: "p",
     name: "p",
     settings: { width: 1920, height: 1080, frameRate: { numerator: 30, denominator: 1 }, audioSampleRate: 48000 },

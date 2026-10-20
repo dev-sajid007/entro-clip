@@ -45,6 +45,7 @@ export default function App() {
 
   const tracks = useMemo(() => (state ? sortedTracks(state.project) : []), [state]);
   const selectedClip = tracks.flatMap((t) => t.clips).find((c) => c.id === selectedClipId) ?? null;
+  const selectedTrack = selectedClip ? (tracks.find((t) => t.clips.includes(selectedClip)) ?? null) : null;
   const selectedAsset =
     state?.project.assets.find((a) => a.id === (selectedClip?.assetId ?? selectedAssetId)) ?? null;
   const missingIds = useMemo(() => new Set(state?.missingAssetIds ?? []), [state?.missingAssetIds]);
@@ -214,8 +215,10 @@ export default function App() {
         <Inspector
           asset={selectedAsset}
           clip={selectedClip}
+          track={selectedTrack}
           missing={selectedAsset ? missingIds.has(selectedAsset.id) : false}
           settings={state?.project.settings ?? null}
+          onEdit={project.edit}
         />
       </aside>
 

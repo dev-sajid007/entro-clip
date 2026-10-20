@@ -56,6 +56,14 @@ export interface Clip {
   sourceInUs: Microseconds;
   sourceOutUs: Microseconds;
   enabled: boolean;
+  audio: ClipAudio;
+}
+
+/** Mirrors `ClipAudio` in src-tauri/src/domain/project.rs. */
+export interface ClipAudio {
+  gainDb: number;
+  fadeInUs: Microseconds;
+  fadeOutUs: Microseconds;
 }
 
 export interface Track {
@@ -65,6 +73,7 @@ export interface Track {
   order: number;
   muted: boolean;
   hidden: boolean;
+  gainDb: number;
   clips: Clip[];
 }
 
@@ -109,9 +118,17 @@ export type Edit =
     }
   | { type: "splitClip"; clipId: string; atUs: Microseconds }
   | { type: "deleteClip"; clipId: string }
+  | { type: "updateClipAudio"; clipId: string; gainDb?: number; fadeInUs?: Microseconds; fadeOutUs?: Microseconds }
   | { type: "addTrack"; kind: TrackKind }
   | { type: "deleteTrack"; trackId: string }
-  | { type: "updateTrack"; trackId: string; name?: string; muted?: boolean; hidden?: boolean };
+  | {
+      type: "updateTrack";
+      trackId: string;
+      name?: string;
+      muted?: boolean;
+      hidden?: boolean;
+      gainDb?: number;
+    };
 
 export interface EditResult {
   state: ProjectState;

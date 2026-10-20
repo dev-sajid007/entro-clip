@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { errorMessage, renderPreviewFrame, type AppError, type Project } from "../../lib/tauri";
 import { activeAt, sourceSecondsAt, type ActiveClip } from "../../lib/playback";
+import { clipGainAt, elementVolume } from "../../lib/audio";
 import type { Microseconds } from "../../lib/time";
 
 /** Scrubbing requests wait this long for the playhead to settle. */
@@ -18,6 +19,8 @@ interface Props {
 
 function syncElement(el: HTMLMediaElement | null | undefined, active: ActiveClip, us: Microseconds) {
   if (!el) return;
+  // Boosts above 0 dB can't be heard here; export applies them.
+  el.volume = elementVolume(clipGainAt(active.clip, active.track, us));
   const target = sourceSecondsAt(active.clip, us);
   if (el.readyState >= 1 && Math.abs(el.currentTime - target) > MAX_DRIFT_S) {
     el.currentTime = target;
